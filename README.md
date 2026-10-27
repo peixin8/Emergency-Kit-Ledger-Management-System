@@ -38,11 +38,27 @@ npm run dev
 - “导出 Excel”导出当前筛选出的未删除台账；可用导出文件作为模板，按相同中文表头导入新编号。导入不会覆盖已有编号，整个文件验证失败时不会写入部分记录。文件限制为 `.xlsx`、2 MB、1000 条数据；导出上限为 10000 条。
 - 首版字段包括 ID、原始地址、目标地址、申请方式、联系人、设备状况、机房、纤芯、制式、BBU/RRU 型号和功耗、网管及业务 IP/VLAN，并补充申请日期、方向、序列号、资产归属、备注等。
 
+## 输入与时间边界
+
+- 每次打开新增台账都恢复默认字段并清除旧校验提示；保存失败时保留本次输入。
+- 网管与业务 VLAN 可留空；填写时必须为 1–4094 的整数。JSON 小数值（包括 `1.0`）返回 HTTP 400，不再自动截断。
+- Excel 文件上限为 2,097,152 字节（2 MiB），完整 multipart 请求上限为 3,145,728 字节（3 MiB），为边界及请求头预留空间。缺文件、空文件或内容非法返回 HTTP 400／`VALIDATION_ERROR`；文件或请求超限返回 HTTP 413／`UPLOAD_TOO_LARGE`。
+- 应用的每个数据库连接固定使用东八区会话，使数据库生成的创建、更新和历史时间与接口的 `Asia/Shanghai` 解释一致；修改配置后需重启后端，使连接池重新建立连接。申请日期仍是无时区日期。
+- 不自动调整已有 SQL 时间或审计快照。若旧实例曾在错误时区写入数据，需先核对来源并备份，再另行制定修正方案，不能直接对全部历史加减八小时。
+
 ## 验证
 
 ```powershell
 cd backend
 .\mvnw.cmd verify
+```
+
+时间回归还需分别在 UTC 与上海 JVM 时区运行测试：
+
+```powershell
+cd backend
+.\mvnw.cmd "-DargLine=-Duser.timezone=UTC" verify
+.\mvnw.cmd "-DargLine=-Duser.timezone=Asia/Shanghai" verify
 ```
 
 ```powershell

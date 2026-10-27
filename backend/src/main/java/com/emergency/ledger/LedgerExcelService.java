@@ -68,7 +68,7 @@ public class LedgerExcelService {
     @Transactional
     public int importFile(CurrentUser user,MultipartFile file) {
         if(file==null||file.isEmpty()) throw bad("Excel 文件不能为空");
-        if(file.getSize()>MAX_BYTES) throw bad("Excel 文件不能超过 2 MB");
+        if(file.getSize()>MAX_BYTES) throw new ApiException(HttpStatus.PAYLOAD_TOO_LARGE,"UPLOAD_TOO_LARGE","Excel 文件不能超过 2 MB");
         if(file.getOriginalFilename()==null||!file.getOriginalFilename().toLowerCase().endsWith(".xlsx")) throw bad("仅支持 .xlsx 文件");
         try(XSSFWorkbook workbook=new XSSFWorkbook(file.getInputStream())) {
             if(workbook.getNumberOfSheets()!=1) throw bad("Excel 只能包含一个工作表");

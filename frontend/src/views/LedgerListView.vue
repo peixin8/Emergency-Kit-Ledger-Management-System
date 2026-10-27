@@ -20,6 +20,7 @@ const drawerMode = ref<'create' | 'edit' | 'detail'>('create')
 const current = ref<Ledger | null>(null)
 const drawerLoading = ref(false)
 const submitting = ref(false)
+const formSession = ref(0)
 const formRef = ref<InstanceType<typeof LedgerForm> | null>(null)
 const historyVisible = ref(false)
 const historyId = ref('')
@@ -50,7 +51,7 @@ async function load() {
 }
 function search() { filter.page = 1; void load() }
 function reset() { filter.keyword = ''; filter.status = ''; filter.direction = ''; filter.page = 1; void load() }
-function openCreate() { detailSequence++; drawerLoading.value = false; current.value = null; drawerMode.value = 'create'; drawerVisible.value = true }
+function openCreate() { formSession.value++; detailSequence++; drawerLoading.value = false; current.value = null; drawerMode.value = 'create'; drawerVisible.value = true }
 async function openRecord(id: string, mode: 'edit' | 'detail') {
   const sequence = ++detailSequence
   drawerMode.value = mode
@@ -142,7 +143,7 @@ onMounted(load)
       </el-table>
       <div class="table-footer"><span>显示第 {{ pageData.total ? (filter.page - 1) * filter.pageSize + 1 : 0 }}–{{ Math.min(filter.page * filter.pageSize, pageData.total) }} 条，共 {{ pageData.total }} 条</span><el-pagination v-model:current-page="filter.page" v-model:page-size="filter.pageSize" :total="pageData.total" :page-sizes="[10, 20, 50, 100]" layout="sizes, prev, pager, next" background @current-change="load" /></div>
     </section>
-    <el-drawer v-model="drawerVisible" :title="drawerTitle" size="min(760px, 96vw)" class="ledger-drawer" :close-on-click-modal="!submitting" :close-on-press-escape="!submitting" :before-close="(done: () => void) => { if (!submitting) done() }" @closed="detailSequence++"><div v-loading="drawerLoading" class="drawer-content"><LedgerDetail v-if="drawerMode === 'detail' && current" :ledger="current" /><LedgerForm v-else-if="drawerMode === 'create' || current" ref="formRef" :model-value="current" :submitting="submitting" @save="save" /></div><template #footer><div class="drawer-actions"><el-button :disabled="submitting" @click="drawerVisible = false">{{ drawerMode === 'detail' ? '关闭' : '取消' }}</el-button><el-button v-if="drawerMode !== 'detail'" type="primary" :loading="submitting" @click="formRef?.submit()">保存台账</el-button><el-button v-else-if="current" type="primary" @click="openRecord(current.id, 'edit')">编辑记录</el-button></div></template></el-drawer>
+    <el-drawer v-model="drawerVisible" :title="drawerTitle" size="min(760px, 96vw)" class="ledger-drawer" :close-on-click-modal="!submitting" :close-on-press-escape="!submitting" :before-close="(done: () => void) => { if (!submitting) done() }" @closed="detailSequence++"><div v-loading="drawerLoading" class="drawer-content"><LedgerDetail v-if="drawerMode === 'detail' && current" :ledger="current" /><LedgerForm v-else-if="drawerMode === 'create' || current" :key="formSession" ref="formRef" :model-value="current" :submitting="submitting" @save="save" /></div><template #footer><div class="drawer-actions"><el-button :disabled="submitting" @click="drawerVisible = false">{{ drawerMode === 'detail' ? '关闭' : '取消' }}</el-button><el-button v-if="drawerMode !== 'detail'" type="primary" :loading="submitting" @click="formRef?.submit()">保存台账</el-button><el-button v-else-if="current" type="primary" @click="openRecord(current.id, 'edit')">编辑记录</el-button></div></template></el-drawer>
     <el-drawer v-model="historyVisible" title="台账修改历史" size="min(850px, 96vw)" class="ledger-drawer"><LedgerHistory v-if="historyVisible && historyId" :ledger-id="historyId" /></el-drawer>
   </div>
 </template>

@@ -5,6 +5,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDateTime;
+import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
@@ -26,13 +27,13 @@ public class LedgerRepository {
     private static final RowMapper<LedgerRecord> MAPPER = (rs,row) -> new LedgerRecord(
         Long.toString(rs.getLong("id")),Long.toString(rs.getLong("organization_id")),rs.getString("ledger_code"),rs.getString("original_address"),rs.getString("destination_address"),
         rs.getString("application_method"),rs.getString("applicant_contact"),rs.getString("applicant_phone"),rs.getString("device_condition"),rs.getString("direction"),
-        rs.getDate("application_date").toLocalDate(),rs.getString("access_room"),rs.getString("fiber_core"),rs.getString("network_standard"),rs.getString("bbu_model"),rs.getString("rru_model"),
+        rs.getObject("application_date",LocalDate.class),rs.getString("access_room"),rs.getString("fiber_core"),rs.getString("network_standard"),rs.getString("bbu_model"),rs.getString("rru_model"),
         decimal(rs,"bbu_rru_power_watts"),rs.getString("management_ip"),intOrNull(rs,"management_vlan"),rs.getString("business_ip"),intOrNull(rs,"business_vlan"),
         rs.getString("device_serial_no"),rs.getString("asset_owner"),rs.getString("remarks"),rs.getObject("created_at",LocalDateTime.class).atZone(ZoneId.of("Asia/Shanghai")).toOffsetDateTime(),rs.getObject("updated_at",LocalDateTime.class).atZone(ZoneId.of("Asia/Shanghai")).toOffsetDateTime(),Long.toString(rs.getLong("version")));
     private static String decimal(ResultSet rs,String key) throws SQLException { BigDecimal v=rs.getBigDecimal(key); return v==null?null:v.setScale(2).toPlainString(); }
     private static Integer intOrNull(ResultSet rs,String key) throws SQLException { int v=rs.getInt(key); return rs.wasNull()?null:v; }
     private Object[] values(LedgerRequest r, BigDecimal power) {
-        return new Object[]{r.ledgerCode().trim(),r.originalAddress().trim(),r.destinationAddress().trim(),r.applicationMethod(),r.applicantContact().trim(),blank(r.applicantPhone()),r.deviceCondition(),r.direction(),java.sql.Date.valueOf(r.applicationDate()),blank(r.accessRoom()),blank(r.fiberCore()),blank(r.networkStandard()),blank(r.bbuModel()),blank(r.rruModel()),power,blank(r.managementIp()),r.managementVlan(),blank(r.businessIp()),r.businessVlan(),blank(r.deviceSerialNo()),blank(r.assetOwner()),blank(r.remarks())};
+        return new Object[]{r.ledgerCode().trim(),r.originalAddress().trim(),r.destinationAddress().trim(),r.applicationMethod(),r.applicantContact().trim(),blank(r.applicantPhone()),r.deviceCondition(),r.direction(),r.applicationDate(),blank(r.accessRoom()),blank(r.fiberCore()),blank(r.networkStandard()),blank(r.bbuModel()),blank(r.rruModel()),power,blank(r.managementIp()),r.managementVlan(),blank(r.businessIp()),r.businessVlan(),blank(r.deviceSerialNo()),blank(r.assetOwner()),blank(r.remarks())};
     }
     private static String blank(String s) { return s==null||s.isBlank()?null:s.trim(); }
     public long insert(long organizationId, LedgerRequest r, BigDecimal power) {

@@ -75,9 +75,17 @@ class LedgerExcelTest {
         mvc.perform(multipart("/api/v1/ledgers/import").file(file(new byte[0])))
             .andExpect(status().isBadRequest());
         mvc.perform(multipart("/api/v1/ledgers/import").file(file(new byte[2*1024*1024+1])))
-            .andExpect(status().isBadRequest());
+            .andExpect(status().isPayloadTooLarge()).andExpect(jsonPath("$.code").value("UPLOAD_TOO_LARGE"));
         mvc.perform(multipart("/api/v1/ledgers/import").file(file("not xlsx".getBytes())))
             .andExpect(status().isBadRequest());
+    }
+
+    @Test void businessSizeGuardAlsoReturnsCompleteLengthDelimitedJson() throws Exception {
+        var response=mvc.perform(multipart("/api/v1/ledgers/import").file(file(new byte[2097153])))
+            .andExpect(status().isPayloadTooLarge()).andExpect(jsonPath("$.code").value("UPLOAD_TOO_LARGE"))
+            .andReturn().getResponse();
+        assertThat(response.getHeader("Content-Length")).isEqualTo(Integer.toString(response.getContentAsByteArray().length));
+        assertThat(response.getHeader("Content-Type")).isEqualTo(MediaType.APPLICATION_JSON_VALUE);
     }
 
     @Test void formulaInLaterRowReportsLineAndRollsBackEarlierRows() throws Exception {

@@ -4,8 +4,17 @@ spring:
     username: sa
     password:
     driver-class-name: org.h2.Driver
+    hikari:
+      connection-init-sql: SET TIME ZONE '+08:00'
   flyway:
     enabled: true
+  servlet:
+    multipart:
+      max-file-size: 2MB
+      max-request-size: 3MB
+server:
+  tomcat:
+    max-swallow-size: -1
 app:
   admin:
     username: testadmin
