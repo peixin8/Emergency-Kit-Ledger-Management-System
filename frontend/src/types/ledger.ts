@@ -26,6 +26,8 @@ export interface LedgerInput {
   deviceSerialNo: string
   assetOwner: string
   remarks: string
+  latitude: string | null
+  longitude: string | null
 }
 export interface Ledger extends LedgerInput {
   id: string
@@ -35,6 +37,8 @@ export interface Ledger extends LedgerInput {
   updatedAt: string
 }
 export interface LedgerPage { records: Ledger[]; total: number; page: number; pageSize: number }
+export interface LedgerMapPoint { id: string; ledgerCode: string; destinationAddress: string; deviceCondition: DeviceCondition; latitude: string; longitude: string }
+export interface LedgerMapPoints { records: LedgerMapPoint[]; unlocatedCount: number }
 export interface LedgerHistoryEntry { id: string; ledgerId: string; action: 'CREATE' | 'UPDATE' | 'DELETE'; occurredAt: string; before: Ledger | null; after: Ledger | null }
 export interface LedgerHistoryPage { records: LedgerHistoryEntry[]; total: number; page: number; pageSize: number }
 export interface PageQuery { page: number; pageSize: number; keyword?: string; status?: DeviceCondition; direction?: Direction }
@@ -50,6 +54,6 @@ export function emptyLedger(): LedgerInput {
     applicationDate: new Date().toLocaleDateString('sv-SE'), deviceCondition: 'GOOD',
     accessRoom: '', fiberCore: '', networkStandard: '', bbuModel: '', rruModel: '',
     bbuRruPowerWatts: '', managementIp: '', managementVlan: null, businessIp: '',
-    businessVlan: null, deviceSerialNo: '', assetOwner: '', remarks: ''
+    businessVlan: null, deviceSerialNo: '', assetOwner: '', remarks: '', latitude: null, longitude: null
   }
 }

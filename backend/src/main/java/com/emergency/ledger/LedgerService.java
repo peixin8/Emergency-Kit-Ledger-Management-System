@@ -25,6 +25,7 @@ public class LedgerService {
         if(record==null) throw new ApiException(HttpStatus.NOT_FOUND,"NOT_FOUND","台账不存在");
         return record;
     }
+    public LedgerRepository.MapPoints mapPoints(CurrentUser user) { return repository.mapPoints(); }
     public LedgerRepository.HistoryPage history(CurrentUser user,long id,int page,int pageSize) {
         validatePage(page,pageSize);
         if(!repository.existsIncludingDeleted(id))
@@ -75,12 +76,26 @@ public class LedgerService {
         if(r.originalAddress().trim().equals(r.destinationAddress().trim())) throw bad("原始地址与目标地址不能相同");
         if(update) parseVersion(r.version());
         ip(r.managementIp()); ip(r.businessIp());
+        boolean hasLatitude=r.latitude()!=null&&!r.latitude().isBlank();
+        boolean hasLongitude=r.longitude()!=null&&!r.longitude().isBlank();
+        if(hasLatitude!=hasLongitude) throw bad("纬度和经度必须同时填写");
+        if(hasLatitude) {
+            coordinate(r.latitude(),"纬度",90);
+            coordinate(r.longitude(),"经度",180);
+        }
         if(r.bbuRruPowerWatts()==null||r.bbuRruPowerWatts().isBlank()) return null;
         try {
             BigDecimal value=new BigDecimal(r.bbuRruPowerWatts());
             if(value.signum()<0||value.scale()>2||value.precision()-value.scale()>10) throw bad("功耗须为非负数，最多两位小数");
             return value.setScale(2);
         } catch(NumberFormatException e) { throw bad("功耗格式无效"); }
+    }
+    private void coordinate(String input,String label,int bound) {
+        String trimmed=input.trim();
+        if(!trimmed.matches("[+-]?(?:[0-9]+)(?:\\.[0-9]{1,7})?")) throw bad(label+"格式无效，最多七位小数");
+        try {
+            if(new BigDecimal(trimmed).abs().compareTo(BigDecimal.valueOf(bound))>0) throw bad(label+"超出范围");
+        } catch(NumberFormatException e) { throw bad(label+"格式无效"); }
     }
     private void ip(String input) {
         if(input==null||input.isBlank()) return;

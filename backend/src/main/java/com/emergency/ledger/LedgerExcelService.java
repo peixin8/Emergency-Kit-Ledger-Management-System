@@ -27,7 +27,7 @@ public class LedgerExcelService {
     private static final int MAX_EXPORT_ROWS = 10000;
     private static final String[] HEADERS = {
         "台账编号", "原始地址", "目标地址", "进出申请方式", "申请联系人", "联系电话", "应急宝设备状况", "进出方向", "申请日期",
-        "接入机房", "纤芯", "制式", "BBU型号", "RRU型号", "BBU-RRU功耗(W)", "网管IP", "网管VLAN", "业务IP", "业务VLAN", "设备序列号", "资产归属", "备注"
+        "接入机房", "纤芯", "制式", "BBU型号", "RRU型号", "BBU-RRU功耗(W)", "网管IP", "网管VLAN", "业务IP", "业务VLAN", "设备序列号", "资产归属", "备注", "纬度", "经度"
     };
     private static final Map<String,String> METHOD = Map.of("ONLINE","线上","PAPER","纸质","PHONE","电话","OTHER","其他");
     private static final Map<String,String> CONDITION = Map.of("GOOD","正常","REPAIR","维修中","FAULT","故障","RETIRED","退役");
@@ -57,7 +57,7 @@ public class LedgerExcelService {
                     CONDITION.get(record.deviceCondition()),DIRECTION.get(record.direction()),record.applicationDate().toString(),
                     record.accessRoom(),record.fiberCore(),record.networkStandard(),record.bbuModel(),record.rruModel(),
                     record.bbuRruPowerWatts(),record.managementIp(),number(record.managementVlan()),record.businessIp(),
-                    number(record.businessVlan()),record.deviceSerialNo(),record.assetOwner(),record.remarks()};
+                    number(record.businessVlan()),record.deviceSerialNo(),record.assetOwner(),record.remarks(),record.latitude(),record.longitude()};
                 for(int i=0;i<values.length;i++) row.createCell(i).setCellValue(values[i]==null?"":values[i]);
             }
             workbook.write(out);
@@ -76,16 +76,19 @@ public class LedgerExcelService {
             Row header=sheet.getRow(0);
             if(header==null) throw bad("Excel 表头缺失");
             DataFormatter formatter=new DataFormatter();
-            for(int i=0;i<HEADERS.length;i++) if(!HEADERS[i].equals(value(header,i,formatter))) throw bad("Excel 表头与导出模板不一致");
+            boolean oldTemplate=header.getLastCellNum()==HEADERS.length-2;
+            int columns=oldTemplate?HEADERS.length-2:HEADERS.length;
+            if(header.getLastCellNum()!=columns) throw bad("Excel 表头与导出模板不一致");
+            for(int i=0;i<columns;i++) if(!HEADERS[i].equals(value(header,i,formatter))) throw bad("Excel 表头与导出模板不一致");
             if(sheet.getLastRowNum()>MAX_IMPORT_ROWS) throw bad("Excel 不能超过 1000 行数据");
             int imported=0;
             for(int index=1;index<=sheet.getLastRowNum();index++) {
                 Row row=sheet.getRow(index);
                 int line=index+1;
                 if(row==null) continue;
-                try { if(isBlank(row,formatter)) continue; }
+                try { if(isBlank(row,formatter,columns)) continue; }
                 catch(IllegalArgumentException e) { throw bad("第 "+line+" 行："+e.getMessage()); }
-                LedgerRequest request=parse(row,formatter,line);
+                LedgerRequest request=parse(row,formatter,line,columns);
                 Set<ConstraintViolation<LedgerRequest>> violations=validator.validate(request);
                 if(!violations.isEmpty()) {
                     String detail=violations.stream().map(v -> v.getPropertyPath()+" "+v.getMessage()).sorted().collect(Collectors.joining("；"));
@@ -102,13 +105,13 @@ public class LedgerExcelService {
         catch(Exception e) { throw bad("Excel 文件格式无效或无法读取"); }
     }
 
-    private LedgerRequest parse(Row row,DataFormatter formatter,int line) {
+    private LedgerRequest parse(Row row,DataFormatter formatter,int line,int columns) {
         try {
             String[] v=new String[HEADERS.length];
-            for(int i=0;i<v.length;i++) v[i]=value(row,i,formatter);
+            for(int i=0;i<columns;i++) v[i]=value(row,i,formatter);
             return new LedgerRequest(v[0],v[1],v[2],decode(METHOD,v[3]),v[4],v[5],decode(CONDITION,v[6]),
                 decode(DIRECTION,v[7]),LocalDate.parse(v[8]),v[9],v[10],v[11],v[12],v[13],v[14],v[15],
-                integer(v[16]),v[17],integer(v[18]),v[19],v[20],v[21],"0");
+                integer(v[16]),v[17],integer(v[18]),v[19],v[20],v[21],v[22],v[23],"0");
         } catch(RuntimeException e) { throw bad("第 "+line+" 行：日期、VLAN 或字段格式无效"); }
     }
     private static String value(Row row,int col,DataFormatter formatter) {
@@ -117,8 +120,8 @@ public class LedgerExcelService {
         if(cell.getCellType()==CellType.FORMULA) throw new IllegalArgumentException("不接受公式单元格");
         return formatter.formatCellValue(cell).trim();
     }
-    private static boolean isBlank(Row row,DataFormatter formatter) {
-        for(int i=0;i<HEADERS.length;i++) if(!value(row,i,formatter).isBlank()) return false;
+    private static boolean isBlank(Row row,DataFormatter formatter,int columns) {
+        for(int i=0;i<columns;i++) if(!value(row,i,formatter).isBlank()) return false;
         return true;
     }
     private static String decode(Map<String,String> values,String label) {

@@ -7,6 +7,7 @@ import { ApiError } from '../api/http'
 import LedgerForm from '../components/LedgerForm.vue'
 import LedgerDetail from '../components/LedgerDetail.vue'
 import LedgerHistory from '../components/LedgerHistory.vue'
+import LedgerLocationMap from '../components/LedgerLocationMap.vue'
 import type { DeviceCondition, Direction, Ledger, LedgerInput, LedgerPage } from '../types/ledger'
 import { conditionLabels, directionLabels } from '../types/ledger'
 import { formatLedgerTimestamp } from '../types/date'
@@ -21,6 +22,7 @@ const current = ref<Ledger | null>(null)
 const drawerLoading = ref(false)
 const submitting = ref(false)
 const formRef = ref<InstanceType<typeof LedgerForm> | null>(null)
+const locationMapRef = ref<InstanceType<typeof LedgerLocationMap> | null>(null)
 const historyVisible = ref(false)
 const historyId = ref('')
 const historyLookupId = ref('')
@@ -70,6 +72,7 @@ async function save(input: LedgerInput) {
     ElMessage.success(drawerMode.value === 'edit' ? '台账已更新' : '台账已创建')
     drawerVisible.value = false
     await load()
+    await locationMapRef.value?.reload()
   } catch (error) {
     if (error instanceof ApiError && error.status === 409) ElMessage.error('数据已变化或编号重复，请检查后刷新重试')
     else ElMessage.error(error instanceof Error ? error.message : '保存失败')
@@ -78,7 +81,7 @@ async function save(input: LedgerInput) {
 async function remove(record: Ledger) {
   try { await ElMessageBox.confirm(`确认删除台账「${record.ledgerCode}」？此操作会保留审计记录。`, '删除确认', { type: 'warning', confirmButtonText: '确认删除', cancelButtonText: '取消' }) }
   catch { return }
-  try { await deleteLedger(record.id); detailSequence++; drawerVisible.value = false; current.value = null; ElMessage.success('台账已删除'); if (pageData.value.records.length === 1 && filter.page > 1) filter.page--; await load() }
+  try { await deleteLedger(record.id); detailSequence++; drawerVisible.value = false; current.value = null; ElMessage.success('台账已删除'); if (pageData.value.records.length === 1 && filter.page > 1) filter.page--; await load(); await locationMapRef.value?.reload() }
   catch (error) { ElMessage.error(error instanceof Error ? error.message : '删除失败') }
 }
 function openHistory(id: string) { drawerVisible.value = false; historyId.value = id; historyVisible.value = true }
@@ -115,6 +118,7 @@ async function uploadExcel(event: Event) {
     ElMessage.success(`成功导入 ${result.importedCount} 条台账`)
     filter.page = 1
     await load()
+    await locationMapRef.value?.reload()
   } catch (error) { ElMessage.error({ message: error instanceof Error ? error.message : '导入失败', duration: error instanceof ApiError && error.code === 'IMPORT_STATUS_UNKNOWN' ? 12000 : 3000 }) }
   finally { importing.value = false; input.value = '' }
 }
@@ -126,6 +130,7 @@ onMounted(load)
   <div class="workspace">
     <div class="page-heading"><div><div class="eyebrow">EQUIPMENT LEDGER <span class="eyebrow-line"></span> 共享工作台</div><h1>设备进出台账</h1><p>多人共用同一份台账，点击编号查看完整信息与历史记录。</p></div><el-button type="primary" size="large" class="primary-action" @click="openCreate"><el-icon><CirclePlus /></el-icon> 新增台账</el-button></div>
     <div class="overview-strip"><div><span class="overview-icon">▤</span><span><small>当前结果</small><strong>{{ pageData.total }} <em>条记录</em></strong></span></div><div class="overview-note"><span class="status-dot"></span> 数据实时写入共享数据库</div></div>
+    <LedgerLocationMap ref="locationMapRef" @open="id => openRecord(id, 'detail')" />
     <section class="data-panel"><div class="panel-heading"><div><h2>台账记录</h2><p>按编号、位置及设备信息快速检索；点击编号查看详情</p></div><span class="panel-count">共 {{ pageData.total }} 条</span></div>
       <div class="filter-row"><el-input v-model="filter.keyword" class="search-input" clearable placeholder="搜索编号、地址或联系人" @keyup.enter="search" @clear="search"><template #prefix><el-icon><Search /></el-icon></template></el-input><el-select v-model="filter.direction" clearable placeholder="流转方向" @change="search"><el-option v-for="(label, value) in directionLabels" :key="value" :label="label" :value="value" /></el-select><el-select v-model="filter.status" clearable placeholder="设备状况" @change="search"><el-option v-for="(label, value) in conditionLabels" :key="value" :label="label" :value="value" /></el-select><el-button @click="reset"><el-icon><Refresh /></el-icon> 重置</el-button><el-button type="primary" plain @click="search"><el-icon><Search /></el-icon> 查询</el-button></div>
       <div class="file-row"><div class="file-actions"><el-button :loading="exporting" @click="downloadExcel"><el-icon><Download /></el-icon> 导出 Excel</el-button><el-button :loading="importing" @click="fileInput?.click()"><el-icon><Upload /></el-icon> 导入 Excel</el-button><input ref="fileInput" type="file" accept=".xlsx" class="visually-hidden" aria-label="选择 Excel 文件" @change="uploadExcel" /><span>可先导出作为模板；导入只新增未使用的台账编号。</span></div><div class="history-lookup"><el-input v-model="historyLookupId" placeholder="已删除台账的 ID" aria-label="历史台账 ID" @keyup.enter="lookupHistory" /><el-button @click="lookupHistory">查询历史</el-button></div></div>

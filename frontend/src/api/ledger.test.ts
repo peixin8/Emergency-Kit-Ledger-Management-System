@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from './http'
-import { exportLedgers, importLedgers, listLedgerHistory, listLedgers, updateLedger } from './ledger'
+import { exportLedgers, importLedgers, listLedgerHistory, listLedgerMapPoints, listLedgers, updateLedger } from './ledger'
 import { emptyLedger } from '../types/ledger'
 
 const success = (data: unknown) => new Response(JSON.stringify({ code: 'OK', message: '成功', data }), { status: 200, headers: { 'Content-Type': 'application/json' } })
@@ -29,6 +29,12 @@ describe('台账请求', () => {
     await listLedgerHistory('9007199254740993', 2, 10)
     expect(String(fetcher.mock.calls[0]?.[0])).toContain('/ledgers/9007199254740993/history?page=2&pageSize=10')
     expect(new Headers(fetcher.mock.calls[0]?.[1]?.headers).has('Authorization')).toBe(false)
+  })
+  it('地图点位从全部有效台账专用接口读取，保留未定位数量', async () => {
+    const page = { records: [{ id: '9007199254740993', ledgerCode: 'XM-001', destinationAddress: '厦门市思明区', deviceCondition: 'GOOD', latitude: '24.4798345', longitude: '118.0894251' }], unlocatedCount: 2 }
+    const fetcher = vi.spyOn(globalThis, 'fetch').mockResolvedValue(success(page))
+    expect(await listLedgerMapPoints()).toEqual(page)
+    expect(String(fetcher.mock.calls[0]?.[0])).toContain('/api/v1/ledgers/map-points')
   })
   it('遗留登录令牌不会随共享请求发送', async () => {
     sessionStorage.setItem('emergency-ledger-token', 'old-token')

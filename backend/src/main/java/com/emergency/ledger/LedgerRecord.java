@@ -10,5 +10,6 @@ public record LedgerRecord(
     String accessRoom, String fiberCore, String networkStandard, String bbuModel, String rruModel,
     String bbuRruPowerWatts, String managementIp, Integer managementVlan,
     String businessIp, Integer businessVlan, String deviceSerialNo, String assetOwner,
-    String remarks, OffsetDateTime createdAt, OffsetDateTime updatedAt, String version
+    String remarks, String latitude, String longitude,
+    OffsetDateTime createdAt, OffsetDateTime updatedAt, String version
 ) {}

@@ -13,11 +13,13 @@
   "dependencies": {
     "@element-plus/icons-vue": "2.3.2",
     "element-plus": "2.11.9",
+    "leaflet": "1.9.4",
     "pinia": "3.0.3",
     "vue": "3.5.44",
     "vue-router": "4.5.1"
   },
   "devDependencies": {
+    "@types/leaflet": "1.9.22",
     "@types/node": "24.8.1",
     "@vitejs/plugin-vue": "6.0.2",
     "@vue/test-utils": "2.4.6",
@@ -31,5 +33,7 @@
     "vitest": "5.0.5",
     "vue-tsc": "3.1.1"
   },
-  "engines": { "node": ">=20.19.0" }
+  "engines": {
+    "node": ">=20.19.0"
+  }
 }

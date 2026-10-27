@@ -24,6 +24,37 @@ class LedgerExcelTest {
     @Autowired ObjectMapper json;
     @Autowired JdbcTemplate jdbc;
 
+    @Test void coordinatesRoundTripAndOldTemplateStillImports() throws Exception {
+        String source="COORD-"+System.nanoTime();
+        String request=json.writeValueAsString(Map.ofEntries(
+            Map.entry("ledgerCode",source),Map.entry("originalAddress","源机房"),Map.entry("destinationAddress","目标机房"),
+            Map.entry("applicationMethod","ONLINE"),Map.entry("applicantContact","李四"),Map.entry("deviceCondition","GOOD"),
+            Map.entry("direction","IN"),Map.entry("applicationDate","2026-10-27"),
+            Map.entry("latitude","24.4798341"),Map.entry("longitude","118.0894257")));
+        mvc.perform(post("/api/v1/ledgers").contentType(MediaType.APPLICATION_JSON).content(request)).andExpect(status().isCreated());
+        byte[] exported=mvc.perform(get("/api/v1/ledgers/export").param("keyword",source))
+            .andExpect(status().isOk()).andReturn().getResponse().getContentAsByteArray();
+        String newCode="COORD-COPY-"+System.nanoTime(); String oldCode="OLD-COPY-"+System.nanoTime();
+        byte[] newSheet; byte[] oldSheet;
+        try(XSSFWorkbook xlsx=new XSSFWorkbook(new ByteArrayInputStream(exported))) {
+            var sheet=xlsx.getSheetAt(0);
+            assertThat(sheet.getRow(0).getCell(22).getStringCellValue()).isEqualTo("纬度");
+            assertThat(sheet.getRow(0).getCell(23).getStringCellValue()).isEqualTo("经度");
+            assertThat(sheet.getRow(1).getCell(22).getStringCellValue()).isEqualTo("24.4798341");
+            sheet.getRow(1).getCell(0).setCellValue(newCode);
+            ByteArrayOutputStream out=new ByteArrayOutputStream(); xlsx.write(out); newSheet=out.toByteArray();
+            sheet.getRow(0).removeCell(sheet.getRow(0).getCell(22)); sheet.getRow(0).removeCell(sheet.getRow(0).getCell(23));
+            sheet.getRow(1).removeCell(sheet.getRow(1).getCell(22)); sheet.getRow(1).removeCell(sheet.getRow(1).getCell(23));
+            sheet.getRow(1).getCell(0).setCellValue(oldCode);
+            out=new ByteArrayOutputStream(); xlsx.write(out); oldSheet=out.toByteArray();
+        }
+        mvc.perform(multipart("/api/v1/ledgers/import").file(file(newSheet))).andExpect(status().isOk());
+        mvc.perform(multipart("/api/v1/ledgers/import").file(file(oldSheet))).andExpect(status().isOk());
+        assertThat(jdbc.queryForObject("SELECT latitude FROM emergency_device_ledger WHERE ledger_code=?",java.math.BigDecimal.class,newCode))
+            .isEqualByComparingTo("24.4798341");
+        assertThat(jdbc.queryForObject("SELECT latitude FROM emergency_device_ledger WHERE ledger_code=?",java.math.BigDecimal.class,oldCode)).isNull();
+    }
+
     @Test void exportImportsNewCodeAndRejectsDuplicateWithoutPartialWrite() throws Exception {
         String original = "EXCEL-" + System.nanoTime();
         String request = json.writeValueAsString(Map.ofEntries(

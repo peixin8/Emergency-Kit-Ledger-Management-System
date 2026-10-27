@@ -26,5 +26,7 @@ public record LedgerRequest(
     @Size(max=120) String deviceSerialNo,
     @Size(max=120) String assetOwner,
     @Size(max=2000) String remarks,
+    String latitude,
+    String longitude,
     String version
 ) {}
