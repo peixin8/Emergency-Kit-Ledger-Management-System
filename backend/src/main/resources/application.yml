@@ -1,0 +1,21 @@
+server:
+  port: 8080
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3306/emergency_ledger?useSSL=false&serverTimezone=Asia/Shanghai}
+    username: ${DB_USERNAME:emergency}
+    password: ${DB_PASSWORD:}
+  flyway:
+    enabled: true
+  jackson:
+    time-zone: Asia/Shanghai
+  servlet:
+    multipart:
+      max-file-size: 2MB
+      max-request-size: 2MB
+app:
+  token-secret: ${APP_TOKEN_SECRET:}
+  admin:
+    username: ${APP_ADMIN_USERNAME:admin}
+    password: ${APP_ADMIN_PASSWORD:}
+    organization-name: ${APP_ORGANIZATION_NAME:默认组织}
