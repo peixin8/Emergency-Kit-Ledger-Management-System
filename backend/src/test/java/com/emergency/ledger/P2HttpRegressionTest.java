@@ -214,7 +214,7 @@ class P2HttpRegressionTest {
         assertThat(response.getBody().path("data").path("importedCount").asInt()).isEqualTo(1);
         assertThat(counts()).containsExactly(before.get(0)+1,before.get(1)+1);
     }
-    @Test void normalWorkbookImportsAndLaterInvalidOrDuplicateRowRollsBackLedgerAndAudit() throws Exception {
+    @Test void normalWorkbookImportsAndLaterInvalidOrInFileDuplicateRowRollsBackLedgerAndAudit() throws Exception {
         byte[] normal=workbook(code(),false,false);
         var before=counts(); var response=upload("台账.xlsx",normal,null);
         assertThat(response.getStatusCode().value()).isEqualTo(200);
@@ -226,6 +226,105 @@ class P2HttpRegressionTest {
             assertThat(counts()).isEqualTo(before);
         }
     }
+    @Test void existingCodeImportOverwritesAndPreservesIdentityWithUpdateAudit() throws Exception {
+        var original=create(body(code())); String id=original.path("id").asText();
+        byte[] exported=http.getForObject(ROOT+"/export?keyword="+original.path("ledgerCode").asText(),byte[].class);
+        byte[] replacement;
+        try(var workbook=new XSSFWorkbook(new ByteArrayInputStream(exported)); var out=new ByteArrayOutputStream()) {
+            workbook.getSheetAt(0).getRow(1).getCell(4).setCellValue("导入覆盖联系人");
+            workbook.write(out); replacement=out.toByteArray();
+        }
+        var before=counts(); var response=upload("台账.xlsx",replacement,null);
+        assertThat(response.getStatusCode().value()).isEqualTo(200);
+        var result=response.getBody().path("data");
+        assertThat(result.path("importedCount").asInt()).isEqualTo(1);
+        assertThat(result.path("createdCount").asInt()).isZero();
+        assertThat(result.path("updatedCount").asInt()).isEqualTo(1);
+        assertThat(counts()).containsExactly(before.get(0),before.get(1)+1);
+        var updated=http.getForObject(ROOT+"/"+id,JsonNode.class).path("data");
+        assertThat(updated.path("id")).isEqualTo(original.path("id"));
+        assertThat(updated.path("createdAt")).isEqualTo(original.path("createdAt"));
+        assertThat(updated.path("version").asText()).isEqualTo("1");
+        assertThat(updated.path("applicantContact").asText()).isEqualTo("导入覆盖联系人");
+        var history=http.getForObject(ROOT+"/"+id+"/history",JsonNode.class).path("data").path("records");
+        assertThat(history.size()).isEqualTo(2);
+        assertThat(history.get(0).path("action").asText()).isEqualTo("UPDATE");
+        assertThat(history.get(0).path("before")).isEqualTo(original);
+        assertThat(history.get(0).path("after")).isEqualTo(updated);
+    }
+    @Test void legacyOrganizationImportOverwritesOriginalRecordAndKeepsAuditOrganization() throws Exception {
+        var original=moveToLegacyOrganization(create(body(code())));
+        String id=original.path("id").asText();
+        var before=counts();
+        var response=upload("台账.xlsx",workbookWithCodes(original,original.path("ledgerCode").asText()),null);
+        assertThat(response.getStatusCode().value()).isEqualTo(200);
+        assertThat(response.getBody().path("data").path("createdCount").asInt()).isZero();
+        assertThat(response.getBody().path("data").path("updatedCount").asInt()).isEqualTo(1);
+        assertThat(counts()).containsExactly(before.get(0),before.get(1)+1);
+        var updated=http.getForObject(ROOT+"/"+id,JsonNode.class).path("data");
+        assertThat(updated.path("id")).isEqualTo(original.path("id"));
+        assertThat(updated.path("organizationId")).isEqualTo(original.path("organizationId"));
+        assertThat(updated.path("createdAt")).isEqualTo(original.path("createdAt"));
+        assertThat(updated.path("applicantContact").asText()).isEqualTo("导入覆盖联系人");
+        assertThat(updated.path("version").asText()).isEqualTo("1");
+        var entry=http.getForObject(ROOT+"/"+id+"/history",JsonNode.class).path("data").path("records").get(0);
+        assertThat(entry.path("action").asText()).isEqualTo("UPDATE");
+        assertThat(entry.path("before")).isEqualTo(original);
+        assertThat(entry.path("after")).isEqualTo(updated);
+        assertThat(jdbc.queryForObject("SELECT organization_id FROM ledger_audit WHERE id=?",Long.class,entry.path("id").asText()))
+            .isEqualTo(Long.parseLong(original.path("organizationId").asText()));
+    }
+    @ParameterizedTest(name="ambiguous legacy code rejects whole file: bothLegacy={0}, deletedOther={1}")
+    @CsvSource({"false,false","true,false","false,true"})
+    void ambiguousSharedCodeRollsBackEarlierCreateUpdateAndAudit(boolean bothLegacy,boolean deletedOther) throws Exception {
+        var original=create(body(code()));
+        if(bothLegacy) original=moveToLegacyOrganization(original);
+        var other=moveToLegacyOrganization(create(body(code())));
+        jdbc.update("UPDATE emergency_device_ledger SET ledger_code=? WHERE id=?",original.path("ledgerCode").asText(),other.path("id").asText());
+        if(deletedOther) http.delete(ROOT+"/"+other.path("id").asText());
+        var earlier=create(body(code()));
+        byte[] file=workbookWithCodes(original,code(),earlier.path("ledgerCode").asText(),original.path("ledgerCode").asText());
+        var before=counts(); var response=upload("台账.xlsx",file,null);
+        error(response,409,"AMBIGUOUS_LEDGER_CODE");
+        assertThat(response.getBody().path("message").asText()).contains("第 4 行","台账编号对应多条历史记录，无法确定覆盖目标");
+        assertThat(counts()).isEqualTo(before);
+        assertThat(http.getForObject(ROOT+"/"+original.path("id").asText(),JsonNode.class).path("data")).isEqualTo(original);
+        assertThat(http.getForObject(ROOT+"/"+earlier.path("id").asText(),JsonNode.class).path("data")).isEqualTo(earlier);
+    }
+    @Test void deletedLegacyCodeRollsBackEarlierCreateUpdateAndAudit() throws Exception {
+        var deleted=moveToLegacyOrganization(create(body(code())));
+        var earlier=create(body(code()));
+        byte[] file=workbookWithCodes(deleted,code(),earlier.path("ledgerCode").asText(),deleted.path("ledgerCode").asText());
+        http.delete(ROOT+"/"+deleted.path("id").asText());
+        var before=counts(); var response=upload("台账.xlsx",file,null);
+        error(response,409,"DUPLICATE_LEDGER_CODE");
+        assertThat(response.getBody().path("message").asText()).contains("第 4 行","已删除");
+        assertThat(counts()).isEqualTo(before);
+        assertThat(http.getForObject(ROOT+"/"+earlier.path("id").asText(),JsonNode.class).path("data")).isEqualTo(earlier);
+        assertThat(jdbc.queryForObject("SELECT deleted FROM emergency_device_ledger WHERE id=?",Boolean.class,deleted.path("id").asText())).isTrue();
+    }
+    private JsonNode moveToLegacyOrganization(JsonNode record) {
+        String name="旧组织-"+code(); jdbc.update("INSERT INTO organization(name) VALUES (?)",name);
+        Long organization=jdbc.queryForObject("SELECT id FROM organization WHERE name=?",Long.class,name);
+        String id=record.path("id").asText();
+        jdbc.update("UPDATE emergency_device_ledger SET organization_id=? WHERE id=?",organization,id);
+        var moved=http.getForObject(ROOT+"/"+id,JsonNode.class).path("data");
+        jdbc.update("UPDATE ledger_audit SET organization_id=?,new_value=? WHERE ledger_id=?",organization,moved.toString(),id);
+        return moved;
+    }
+    private byte[] workbookWithCodes(JsonNode source,String... codes) throws Exception {
+        byte[] exported=http.getForObject(ROOT+"/export?keyword="+source.path("ledgerCode").asText(),byte[].class);
+        try(var workbook=new XSSFWorkbook(new ByteArrayInputStream(exported)); var out=new ByteArrayOutputStream()) {
+            var sheet=workbook.getSheetAt(0); var template=sheet.getRow(1);
+            for(int i=0;i<codes.length;i++) {
+                var row=i==0?template:sheet.createRow(i+1);
+                if(i>0) for(int col=0;col<template.getLastCellNum();col++) row.createCell(col).setCellValue(template.getCell(col).getStringCellValue());
+                row.getCell(0).setCellValue(codes[i]); row.getCell(4).setCellValue("导入覆盖联系人");
+            }
+            while(sheet.getLastRowNum()>codes.length) sheet.removeRow(sheet.getRow(sheet.getLastRowNum()));
+            workbook.write(out); return out.toByteArray();
+        }
+    }
     private byte[] workbook(String code,boolean second,boolean duplicate) throws Exception {
         var source=create(body(code));
         byte[] exported=http.getForObject(ROOT+"/export?keyword="+source.path("ledgerCode").asText(),byte[].class);
@@ -234,7 +333,7 @@ class P2HttpRegressionTest {
             if(second) {
                 var next=sheet.createRow(2);
                 for(int i=0;i<first.getLastCellNum();i++) next.createCell(i).setCellValue(first.getCell(i).getStringCellValue());
-                next.getCell(0).setCellValue(duplicate?code:code());
+                next.getCell(0).setCellValue(duplicate?first.getCell(0).getStringCellValue():code());
                 if(!duplicate) next.getCell(8).setCellValue("非法日期");
             }
             workbook.write(out); return out.toByteArray();

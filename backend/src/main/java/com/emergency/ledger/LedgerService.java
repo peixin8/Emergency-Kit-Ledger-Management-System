@@ -60,13 +60,15 @@ public class LedgerService {
         canEdit(user);
         BigDecimal power=validate(request,false);
         repository.lockSharedWorkspace(user.organizationId());
-        LedgerRepository.CodeMatch match=repository.codeMatch(user.organizationId(),request.ledgerCode().trim());
-        if(match==null) {
+        var matches=repository.codeMatches(request.ledgerCode().trim());
+        if(matches.size()>1) throw new ApiException(HttpStatus.CONFLICT,"AMBIGUOUS_LEDGER_CODE","台账编号对应多条历史记录，无法确定覆盖目标");
+        if(matches.isEmpty()) {
             long id=repository.insert(user.organizationId(),request,power);
             LedgerRecord created=get(user,id);
             repository.audit(user.organizationId(),id,user.id(),"CREATE",null,serialize(created));
             return ImportOutcome.CREATED;
         }
+        LedgerRepository.CodeMatch match=matches.get(0);
         if(match.deleted()) throw duplicateCode();
         LedgerRecord old=get(user,match.id());
         updateLocked(user,old,request,power,Long.parseLong(old.version()));
