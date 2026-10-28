@@ -8,7 +8,9 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import LedgerListView from './LedgerListView.vue'
 import type { Ledger } from '../types/ledger'
 import MapCanvas from '../components/MapCanvas.vue'
+import LedgerForm from '../components/LedgerForm.vue'
 import { ApiError } from '../api/http'
+import { emptyLedger } from '../types/ledger'
 
 const listLedgers = vi.fn()
 const getLedger = vi.fn()
@@ -16,11 +18,12 @@ const listLedgerMapPoints = vi.fn()
 const importLedgers = vi.fn()
 const deleteLedger = vi.fn()
 const exportLedgers = vi.fn()
+const createLedger = vi.fn()
 vi.mock('../api/ledger', () => ({
   listLedgers: (...args: unknown[]) => listLedgers(...args),
   getLedger: (...args: unknown[]) => getLedger(...args),
   listLedgerMapPoints: (...args: unknown[]) => listLedgerMapPoints(...args),
-  createLedger: vi.fn(), updateLedger: vi.fn(), deleteLedger: (...args: unknown[]) => deleteLedger(...args),
+  createLedger: (...args: unknown[]) => createLedger(...args), updateLedger: vi.fn(), deleteLedger: (...args: unknown[]) => deleteLedger(...args),
   importLedgers: (...args: unknown[]) => importLedgers(...args), exportLedgers: (...args: unknown[]) => exportLedgers(...args)
 }))
 
@@ -82,6 +85,66 @@ beforeEach(() => {
   importLedgers.mockReset()
   deleteLedger.mockReset()
   exportLedgers.mockReset()
+  createLedger.mockReset()
+})
+
+it('导入工具栏提供手动新增入口，打开与右上角一致的空白表单，并说明系统 ID 规则', async () => {
+  const wrapper = mountLedgerList()
+  await flushPromises()
+  const toolbarButton = wrapper.findAll('.file-actions button').find(button => button.text() === '手动新增')
+  expect(toolbarButton).toBeDefined()
+  await toolbarButton!.trigger('click')
+  expect(wrapper.find('.test-drawer h2').text()).toBe('新增台账')
+  expect(wrapper.findComponent(LedgerForm).props('modelValue')).toBeNull()
+  expect(getLedger).not.toHaveBeenCalled()
+  expect(wrapper.find('.file-actions').text()).toContain('不同台账编号')
+  expect(wrapper.find('.file-actions').text()).toContain('不同系统 ID')
+  expect(wrapper.find('.file-actions').text()).toContain('同编号覆盖')
+  wrapper.unmount()
+})
+
+it('工具栏手动新增保存成功后提交新台账并刷新列表与地图', async () => {
+  const input = { ...emptyLedger(), ledgerCode: 'XM-NEW', originalAddress: '厦门市思明区', destinationAddress: '厦门市湖里区', applicantContact: '李四' }
+  const created = { ...ledger, ...input, id: '2' }
+  listLedgers.mockResolvedValueOnce({ records: [ledger], total: 1, page: 1, pageSize: 20 })
+    .mockResolvedValue({ records: [created, ledger], total: 2, page: 1, pageSize: 20 })
+  createLedger.mockResolvedValue(created)
+  const success = vi.spyOn(ElMessage, 'success').mockImplementation(() => ({ close: () => {} }) as ReturnType<typeof ElMessage.success>)
+  try {
+    const wrapper = mountLedgerList()
+    await flushPromises()
+    await wrapper.findAll('.file-actions button').find(button => button.text() === '手动新增')!.trigger('click')
+    wrapper.findComponent(LedgerForm).vm.$emit('save', input)
+    await flushPromises()
+    expect(createLedger).toHaveBeenCalledWith(input)
+    expect(success).toHaveBeenCalledWith('台账已创建')
+    expect(listLedgers).toHaveBeenCalledTimes(2)
+    expect(listLedgerMapPoints).toHaveBeenCalledTimes(2)
+    expect(wrapper.find('.test-table').text()).toContain('XM-NEW')
+    expect(wrapper.find('.test-drawer').exists()).toBe(false)
+    wrapper.unmount()
+  } finally { success.mockRestore() }
+})
+
+it('工具栏手动新增保存失败时保留表单并反馈错误', async () => {
+  const input = { ...emptyLedger(), ledgerCode: 'XM-NEW', originalAddress: '厦门市思明区', destinationAddress: '厦门市湖里区', applicantContact: '李四' }
+  createLedger.mockRejectedValue(new Error('服务器暂不可用'))
+  const error = vi.spyOn(ElMessage, 'error').mockImplementation(() => ({ close: () => {} }) as ReturnType<typeof ElMessage.error>)
+  try {
+    const wrapper = mountLedgerList()
+    await flushPromises()
+    await wrapper.findAll('.file-actions button').find(button => button.text() === '手动新增')!.trigger('click')
+    const form = wrapper.findComponent(LedgerForm)
+    form.vm.$emit('save', input)
+    await flushPromises()
+    expect(createLedger).toHaveBeenCalledWith(input)
+    expect(error).toHaveBeenCalledWith('服务器暂不可用')
+    expect(wrapper.find('.test-drawer h2').text()).toBe('新增台账')
+    expect(wrapper.findComponent(LedgerForm).vm).toBe(form.vm)
+    expect(listLedgers).toHaveBeenCalledTimes(1)
+    expect(listLedgerMapPoints).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  } finally { error.mockRestore() }
 })
 
 it('导入同时新增和覆盖台账时分别提示数量，并刷新列表和地图', async () => {
