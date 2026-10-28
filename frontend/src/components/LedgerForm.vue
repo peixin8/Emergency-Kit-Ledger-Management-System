@@ -5,6 +5,8 @@ import type { LedgerInput, Ledger } from '../types/ledger'
 import { conditionLabels, directionLabels, emptyLedger, methodLabels } from '../types/ledger'
 import { addressesDiffer, validPower, validVlan } from '../types/validation'
 import { validCoordinates } from '../types/validation'
+import { searchAddress, type AddressCandidate } from '../api/ledger'
+import { ApiError } from '../api/http'
 import MapCanvas from './MapCanvas.vue'
 
 const props = defineProps<{ modelValue?: Ledger | null; submitting?: boolean }>()
@@ -12,7 +14,20 @@ const emit = defineEmits<{ save: [value: LedgerInput] }>()
 const formRef = ref<FormInstance>()
 const form = reactive<LedgerInput>(emptyLedger())
 const positionAddress = ref('')
-watch(() => props.modelValue, value => { Object.assign(form, emptyLedger(), value ?? {}); positionAddress.value = form.destinationAddress }, { immediate: true })
+const candidates = ref<AddressCandidate[]>([])
+const searchingAddress = ref(false)
+const searchMessage = ref('')
+let searchRevision = 0
+let searchedAddress = ''
+function clearSearch() {
+  searchRevision++
+  candidates.value = []
+  searchingAddress.value = false
+  searchMessage.value = ''
+  searchedAddress = ''
+}
+watch(() => props.modelValue, value => { clearSearch(); Object.assign(form, emptyLedger(), value ?? {}); positionAddress.value = form.destinationAddress }, { immediate: true })
+watch(() => form.destinationAddress, clearSearch)
 const isEdit = computed(() => !!props.modelValue)
 const selectedPosition = computed(() => {
   const latitude = normalizeCoordinate(form.latitude)
@@ -22,6 +37,39 @@ const selectedPosition = computed(() => {
 const locationNeedsReview = computed(() => selectedPosition.value !== null && addressesDiffer(positionAddress.value, form.destinationAddress))
 function normalizeCoordinate(value: string | null) { return value === null || value.trim() === '' ? null : value.trim() }
 function pickPosition(latitude: string, longitude: string) { form.latitude = latitude; form.longitude = longitude; positionAddress.value = form.destinationAddress }
+async function findAddress() {
+  const address = form.destinationAddress.trim()
+  clearSearch()
+  if (address.length < 2 || address.length > 255) {
+    searchMessage.value = '请先输入 2–255 个字的目标地址。'
+    return
+  }
+  const revision = searchRevision
+  searchedAddress = address
+  searchingAddress.value = true
+  try {
+    const result = await searchAddress(address)
+    if (revision !== searchRevision || address !== form.destinationAddress.trim()) return
+    candidates.value = result.results
+    if (!result.results.length) searchMessage.value = '未找到匹配地址，请补充区、街道或门牌号后重试，也可在地图手动选点。'
+  } catch (error) {
+    if (revision !== searchRevision) return
+    if (error instanceof ApiError && error.code === 'GEOCODE_NOT_CONFIGURED') searchMessage.value = '地址搜索需在后台配置高德 Web 服务 Key；目前可继续在地图手动选点。'
+    else if (error instanceof ApiError && error.code === 'GEOCODE_INVALID_KEY') searchMessage.value = '地址搜索失败，请检查高德 Web 服务 Key 是否有效；也可在地图手动选点。'
+    else if (error instanceof ApiError && error.code === 'GEOCODE_ACCOUNT_ISSUE') searchMessage.value = '地址搜索失败，请联系管理员检查高德账号状态或配额；也可在地图手动选点。'
+    else if (error instanceof ApiError && error.code === 'GEOCODE_BUSY') searchMessage.value = '地址搜索繁忙，请稍后重试。'
+    else if (error instanceof ApiError && error.code === 'GEOCODE_UNAVAILABLE') searchMessage.value = '地址搜索服务暂不可用，请稍后重试或在地图手动选点。'
+    else searchMessage.value = error instanceof Error ? error.message : '地址搜索失败，请稍后重试。'
+  } finally {
+    if (revision === searchRevision) searchingAddress.value = false
+  }
+}
+function selectCandidate(candidate: AddressCandidate) {
+  if (searchedAddress !== form.destinationAddress.trim()) return
+  pickPosition(candidate.latitude, candidate.longitude)
+  candidates.value = []
+  searchMessage.value = '已选中候选点位，请在地图核对实际位置；如有偏差，可点击地图微调。'
+}
 const rules: FormRules<LedgerInput> = {
   ledgerCode: [{ required: true, message: '请输入台账编号', trigger: 'blur' }],
   originalAddress: [{ required: true, message: '请输入原始地址', trigger: 'blur' }],
@@ -64,7 +112,10 @@ defineExpose({ submit })
       <el-form-item label="联系电话" prop="applicantPhone"><el-input v-model.trim="form.applicantPhone" placeholder="选填" maxlength="40" /></el-form-item>
     </div>
     <div class="form-section-title"><span>02</span> 目标地址点位</div>
-    <p class="form-location-hint">请在厦门地图上点击设备目标地址的实际位置，也可手动填写 WGS84 经纬度。未选点的台账会显示为待定位。</p>
+    <p class="form-location-hint">输入目标地址后点击搜索，选择候选位置并在地图核对；也可在厦门地图上点击实际位置或手动填写 WGS84 经纬度。未选点的台账会显示为待定位。</p>
+    <div class="address-search-actions"><button type="button" class="address-search-button" :disabled="searchingAddress" @click="findAddress">{{ searchingAddress ? '搜索中…' : '搜索地址' }}</button><span>仅点击按钮时，将目标地址发送至高德地图服务查询。</span></div>
+    <p v-if="searchMessage" class="address-search-message" role="status">{{ searchMessage }}</p>
+    <ul v-if="candidates.length" class="address-candidates" aria-label="地址搜索候选位置"><li v-for="(candidate, index) in candidates" :key="`${candidate.latitude}-${candidate.longitude}-${index}`"><button type="button" class="address-candidate" @click="selectCandidate(candidate)"><strong>{{ candidate.displayName }}</strong><small>{{ candidate.latitude }}, {{ candidate.longitude }}</small></button></li></ul>
     <MapCanvas pickable :selected="selectedPosition" @pick="pickPosition" />
     <div class="form-grid location-coordinate-fields">
       <el-form-item label="纬度" prop="latitude" class="latitude-input"><el-input v-model.trim="form.latitude" inputmode="decimal" placeholder="例如 24.4798345" @change="positionAddress = form.destinationAddress" /></el-form-item>
