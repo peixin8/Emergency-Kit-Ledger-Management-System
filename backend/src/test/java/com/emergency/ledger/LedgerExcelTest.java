@@ -4,6 +4,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -13,8 +17,11 @@ import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -23,6 +30,45 @@ class LedgerExcelTest {
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper json;
     @Autowired JdbcTemplate jdbc;
+    @Autowired LedgerService ledgerService;
+    @Autowired SharedIdentity identity;
+    @Autowired PlatformTransactionManager transactionManager;
+
+    @Test void deleteWaitsForTheSameWorkspaceLockUsedByImport() throws Exception {
+        String code="DELETE-LOCK-"+System.nanoTime();
+        String body=json.writeValueAsString(Map.ofEntries(
+            Map.entry("ledgerCode",code),Map.entry("originalAddress","原址"),Map.entry("destinationAddress","目标"),
+            Map.entry("applicationMethod","ONLINE"),Map.entry("applicantContact","联系人"),Map.entry("deviceCondition","GOOD"),
+            Map.entry("direction","IN"),Map.entry("applicationDate","2026-10-27")));
+        String created=mvc.perform(post("/api/v1/ledgers").contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        long id=Long.parseLong(json.readTree(created).path("data").path("id").asText());
+        CountDownLatch locked=new CountDownLatch(1);
+        CountDownLatch release=new CountDownLatch(1);
+        var pool=Executors.newFixedThreadPool(2);
+        try {
+            var holder=pool.submit(() -> new TransactionTemplate(transactionManager).execute(status -> {
+                jdbc.queryForObject("SELECT id FROM organization WHERE id=? FOR UPDATE",Long.class,identity.current().organizationId());
+                locked.countDown();
+                try { assertThat(release.await(10,TimeUnit.SECONDS)).isTrue(); }
+                catch(InterruptedException e) { Thread.currentThread().interrupt(); throw new IllegalStateException(e); }
+                return null;
+            }));
+            assertThat(locked.await(5,TimeUnit.SECONDS)).isTrue();
+            CountDownLatch started=new CountDownLatch(1);
+            var deletion=pool.submit(() -> { started.countDown(); ledgerService.delete(identity.current(),id); });
+            assertThat(started.await(5,TimeUnit.SECONDS)).isTrue();
+            assertThatThrownBy(() -> deletion.get(500,TimeUnit.MILLISECONDS)).isInstanceOf(TimeoutException.class);
+            assertThat(jdbc.queryForObject("SELECT deleted FROM emergency_device_ledger WHERE id=?",Boolean.class,id)).isFalse();
+            release.countDown();
+            holder.get(5,TimeUnit.SECONDS);
+            deletion.get(5,TimeUnit.SECONDS);
+            assertThat(jdbc.queryForObject("SELECT deleted FROM emergency_device_ledger WHERE id=?",Boolean.class,id)).isTrue();
+        } finally {
+            release.countDown();
+            pool.shutdownNow();
+        }
+    }
 
     @Test void coordinatesRoundTripAndOldTemplateStillImports() throws Exception {
         String source="COORD-"+System.nanoTime();
@@ -258,6 +304,58 @@ class LedgerExcelTest {
             .andExpect(jsonPath("$.data.remarks").value("NEW-REMARKS"))
             .andExpect(jsonPath("$.data.latitude").value("24.5"))
             .andExpect(jsonPath("$.data.longitude").value("118.2"));
+    }
+
+    @Test void identicalReimportDoesNotChangeVersionTimestampOrHistoryAndEquivalentNumbersAreUnchanged() throws Exception {
+        String prefix="NO-CHANGE-"+System.nanoTime()+"-";
+        mvc.perform(multipart("/api/v1/ledgers/import").file(file(sourceWorkbook(prefix))))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.data.createdCount").value(11));
+        String code=prefix+"2";
+        var before=jdbc.queryForMap("SELECT id,version,updated_at FROM emergency_device_ledger WHERE ledger_code=?",code);
+        byte[] exported=mvc.perform(get("/api/v1/ledgers/export").param("keyword",code))
+            .andExpect(status().isOk()).andReturn().getResponse().getContentAsByteArray();
+        mvc.perform(multipart("/api/v1/ledgers/import").file(file(exported)))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.data.importedCount").value(1))
+            .andExpect(jsonPath("$.data.createdCount").value(0))
+            .andExpect(jsonPath("$.data.updatedCount").value(0))
+            .andExpect(jsonPath("$.data.unchangedCount").value(1));
+        byte[] equivalent;
+        try(XSSFWorkbook xlsx=new XSSFWorkbook(new ByteArrayInputStream(exported));ByteArrayOutputStream out=new ByteArrayOutputStream()) {
+            var row=xlsx.getSheetAt(0).getRow(1);
+            row.getCell(15).setCellValue("2000W");
+            row.getCell(24).setCellValue("024.4798341");
+            row.getCell(25).setCellValue("0118.0894257");
+            xlsx.write(out); equivalent=out.toByteArray();
+        }
+        mvc.perform(multipart("/api/v1/ledgers/import").file(file(equivalent)))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.data.unchangedCount").value(1));
+        var after=jdbc.queryForMap("SELECT id,version,updated_at FROM emergency_device_ledger WHERE ledger_code=?",code);
+        assertThat(after).isEqualTo(before);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ledger_audit WHERE ledger_id=?",Integer.class,before.get("id"))).isEqualTo(1);
+    }
+
+    @Test void mixedImportCountsCreatedUpdatedAndUnchangedRows() throws Exception {
+        String prefix="MIXED-"+System.nanoTime()+"-";
+        mvc.perform(multipart("/api/v1/ledgers/import").file(file(sourceWorkbook(prefix))))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.data.createdCount").value(11));
+        byte[] exported=mvc.perform(get("/api/v1/ledgers/export").param("keyword",prefix))
+            .andExpect(status().isOk()).andReturn().getResponse().getContentAsByteArray();
+        byte[] mixed;
+        String newCode=prefix+"NEW";
+        try(XSSFWorkbook xlsx=new XSSFWorkbook(new ByteArrayInputStream(exported));ByteArrayOutputStream out=new ByteArrayOutputStream()) {
+            var sheet=xlsx.getSheetAt(0); var first=sheet.getRow(1);
+            first.getCell(4).setCellValue("更新联系人");
+            var added=sheet.createRow(sheet.getLastRowNum()+1);
+            for(int col=0;col<first.getLastCellNum();col++) added.createCell(col).setCellValue(first.getCell(col).getStringCellValue());
+            added.getCell(0).setCellValue(newCode);
+            xlsx.write(out); mixed=out.toByteArray();
+        }
+        mvc.perform(multipart("/api/v1/ledgers/import").file(file(mixed)))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.data.importedCount").value(12))
+            .andExpect(jsonPath("$.data.createdCount").value(1))
+            .andExpect(jsonPath("$.data.updatedCount").value(1))
+            .andExpect(jsonPath("$.data.unchangedCount").value(10));
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM emergency_device_ledger WHERE ledger_code=?",Integer.class,newCode)).isEqualTo(1);
     }
 
     private MockMultipartFile file(byte[] bytes) {

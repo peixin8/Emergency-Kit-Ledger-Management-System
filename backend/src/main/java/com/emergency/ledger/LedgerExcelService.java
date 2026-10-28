@@ -86,6 +86,7 @@ public class LedgerExcelService {
             if(sheet.getLastRowNum()>MAX_IMPORT_ROWS) throw bad("Excel 不能超过 1000 行数据");
             int created=0;
             int updated=0;
+            int unchanged=0;
             Set<String> seenCodes=new HashSet<>();
             for(int index=1;index<=sheet.getLastRowNum();index++) {
                 Row row=sheet.getRow(index);
@@ -103,7 +104,8 @@ public class LedgerExcelService {
                 try {
                     LedgerService.ImportOutcome outcome=ledgers.importUpsert(user,request);
                     if(outcome==LedgerService.ImportOutcome.CREATED) created++;
-                    else updated++;
+                    else if(outcome==LedgerService.ImportOutcome.UPDATED) updated++;
+                    else unchanged++;
                 }
                 catch(DuplicateKeyException e) { throw duplicate(line); }
                 catch(ApiException e) {
@@ -111,8 +113,8 @@ public class LedgerExcelService {
                     throw new ApiException(e.status(),e.code(),"第 "+line+" 行："+e.getMessage());
                 }
             }
-            if(created+updated==0) throw bad("Excel 没有可导入的数据");
-            return new ImportCounts(created+updated,created,updated);
+            if(created+updated+unchanged==0) throw bad("Excel 没有可导入的数据");
+            return new ImportCounts(created+updated+unchanged,created,updated,unchanged);
         } catch(ApiException e) { throw e; }
         catch(Exception e) { throw bad("Excel 文件格式无效或无法读取"); }
     }
@@ -245,7 +247,7 @@ public class LedgerExcelService {
     }
     private static ApiException duplicate(int line) { return new ApiException(HttpStatus.CONFLICT,"DUPLICATE_LEDGER_CODE","第 "+line+" 行「台账编号」：编号属于已删除的台账，无法覆盖"); }
     private static ApiException duplicateInFile(int line) { return new ApiException(HttpStatus.CONFLICT,"DUPLICATE_LEDGER_CODE","第 "+line+" 行「台账编号」：文件内编号重复"); }
-    public record ImportCounts(int importedCount,int createdCount,int updatedCount) {}
+    public record ImportCounts(int importedCount,int createdCount,int updatedCount,int unchangedCount) {}
     private static String number(Integer value) { return value==null?"":value.toString(); }
     private static ApiException bad(String message) { return new ApiException(HttpStatus.BAD_REQUEST,"VALIDATION_ERROR",message); }
 }

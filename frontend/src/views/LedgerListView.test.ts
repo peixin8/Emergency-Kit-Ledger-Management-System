@@ -100,7 +100,7 @@ it('页眉不再显示新增台账，工具栏手动新增仍打开空白表单�
   expect(getLedger).not.toHaveBeenCalled()
   expect(wrapper.find('.file-actions').text()).toContain('不同台账编号')
   expect(wrapper.find('.file-actions').text()).toContain('不同系统 ID')
-  expect(wrapper.find('.file-actions').text()).toContain('同编号覆盖')
+  expect(wrapper.find('.file-actions').text()).toContain('同编号仅在信息变化时覆盖')
   wrapper.unmount()
 })
 
@@ -148,11 +148,11 @@ it('工具栏手动新增保存失败时保留表单并反馈错误', async () =
   } finally { error.mockRestore() }
 })
 
-it('导入同时新增和覆盖台账时分别提示数量，并刷新列表和地图', async () => {
+it('导入同时新增、实际覆盖和无变化时分别提示数量，并刷新列表和地图', async () => {
   const imported = { ...ledger, id: '2', ledgerCode: 'XM-002', direction: 'UNSPECIFIED' as const }
   listLedgers.mockResolvedValueOnce({ records: [ledger], total: 1, page: 1, pageSize: 20 })
     .mockResolvedValue({ records: [imported, ledger], total: 2, page: 1, pageSize: 20 })
-  importLedgers.mockResolvedValue({ importedCount: 2, createdCount: 1, updatedCount: 1 })
+  importLedgers.mockResolvedValue({ importedCount: 3, createdCount: 1, updatedCount: 1, unchangedCount: 1 })
   const success = vi.spyOn(ElMessage, 'success').mockImplementation(() => ({ close: () => {} }) as ReturnType<typeof ElMessage.success>)
   try {
     const wrapper = mountLedgerList()
@@ -164,12 +164,26 @@ it('导入同时新增和覆盖台账时分别提示数量，并刷新列表和�
     await fileInput.trigger('change')
     await flushPromises()
     expect(importLedgers).toHaveBeenCalledWith(file)
-    expect(success).toHaveBeenCalledWith(expect.stringContaining('新增 1 条'))
-    expect(success).toHaveBeenCalledWith(expect.stringContaining('覆盖 1 条'))
+    expect(success).toHaveBeenCalledWith('已处理 3 条有效台账：新增 1 条，实际覆盖 1 条，无变化 1 条')
     expect(listLedgers).toHaveBeenCalledTimes(2)
     expect(listLedgerMapPoints).toHaveBeenCalledTimes(2)
     expect(wrapper.find('.test-table').text()).toContain('XM-002')
     expect(wrapper.find('.test-table').text()).toContain('厦门市湖里区')
+    wrapper.unmount()
+  } finally { success.mockRestore() }
+})
+
+it('重复导入完全相同的台账时明确提示无变化，不声称发生覆盖', async () => {
+  importLedgers.mockResolvedValue({ importedCount: 1, createdCount: 0, updatedCount: 0, unchangedCount: 1 })
+  const success = vi.spyOn(ElMessage, 'success').mockImplementation(() => ({ close: () => {} }) as ReturnType<typeof ElMessage.success>)
+  try {
+    const wrapper = mountLedgerList()
+    await flushPromises()
+    const fileInput = wrapper.find<HTMLInputElement>('input[type="file"]')
+    Object.defineProperty(fileInput.element, 'files', { configurable: true, value: [new File(['xlsx'], 'same.xlsx')] })
+    await fileInput.trigger('change')
+    await flushPromises()
+    expect(success).toHaveBeenCalledWith('已处理 1 条有效台账：新增 0 条，实际覆盖 0 条，无变化 1 条')
     wrapper.unmount()
   } finally { success.mockRestore() }
 })

@@ -69,6 +69,7 @@ public class LedgerService {
         }
         if(match.deleted()) throw duplicateCode();
         LedgerRecord old=get(user,match.id());
+        if(repository.sameBusinessFields(old,request,power)) return ImportOutcome.UNCHANGED;
         updateLocked(user,old,request,power,Long.parseLong(old.version()));
         return ImportOutcome.UPDATED;
     }
@@ -81,10 +82,11 @@ public class LedgerService {
         repository.audit(recordOrg,id,user.id(),"UPDATE",serialize(old),serialize(result));
         return result;
     }
-    public enum ImportOutcome { CREATED, UPDATED }
+    public enum ImportOutcome { CREATED, UPDATED, UNCHANGED }
     @Transactional
     public void delete(CurrentUser user,long id) {
         if(!"ADMIN".equals(user.role())) throw new ApiException(HttpStatus.FORBIDDEN,"FORBIDDEN","仅管理员可删除台账");
+        repository.lockSharedWorkspace(user.organizationId());
         LedgerRecord old=get(user,id);
         long recordOrg=Long.parseLong(old.organizationId());
         int rows=repository.delete(recordOrg,id,Long.parseLong(old.version()));

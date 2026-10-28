@@ -34,7 +34,7 @@ export async function importLedgers(file: File) {
   const form = new FormData()
   form.append('file', file)
   try {
-    return await request<{ importedCount: number; createdCount: number; updatedCount: number }>('/ledgers/import', { method: 'POST', body: form }, undefined, 120_000)
+    return await request<{ importedCount: number; createdCount: number; updatedCount: number; unchangedCount: number }>('/ledgers/import', { method: 'POST', body: form }, undefined, 120_000)
   } catch (error) {
     if (error instanceof ApiError && (error.code === 'TIMEOUT' || error.code === 'NETWORK_ERROR')) {
       throw new ApiError(0, 'IMPORT_STATUS_UNKNOWN', '未收到导入结果，导入结果可能已提交。请先刷新并按台账编号核对，再重试。')

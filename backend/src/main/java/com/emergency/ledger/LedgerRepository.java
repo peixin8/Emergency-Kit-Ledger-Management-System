@@ -8,6 +8,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.time.OffsetDateTime;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -34,6 +35,22 @@ public class LedgerRepository {
     private static Integer intOrNull(ResultSet rs,String key) throws SQLException { int v=rs.getInt(key); return rs.wasNull()?null:v; }
     private Object[] values(LedgerRequest r, BigDecimal power) {
         return new Object[]{r.ledgerCode().trim(),r.originalAddress().trim(),r.destinationAddress().trim(),r.applicationMethod(),r.applicantContact().trim(),blank(r.applicantPhone()),r.deviceCondition(),blank(r.deviceConditionDetail()),r.direction(),java.sql.Date.valueOf(r.applicationDate()),blank(r.ptnPort()),blank(r.accessRoom()),blank(r.fiberCore()),blank(r.networkStandard()),blank(r.bbuModel()),blank(r.rruModel()),power,blank(r.managementIp()),r.managementVlan(),blank(r.businessIp()),r.businessVlan(),blank(r.deviceSerialNo()),blank(r.assetOwner()),blank(r.remarks()),coordinateValue(r.latitude()),coordinateValue(r.longitude())};
+    }
+    public boolean sameBusinessFields(LedgerRecord old,LedgerRequest request,BigDecimal power) {
+        Object[] incoming=values(request,power);
+        Object[] current={old.ledgerCode(),old.originalAddress(),old.destinationAddress(),old.applicationMethod(),
+            old.applicantContact(),old.applicantPhone(),old.deviceCondition(),old.deviceConditionDetail(),old.direction(),
+            java.sql.Date.valueOf(old.applicationDate()),old.ptnPort(),old.accessRoom(),old.fiberCore(),old.networkStandard(),
+            old.bbuModel(),old.rruModel(),old.bbuRruPowerWatts()==null?null:new BigDecimal(old.bbuRruPowerWatts()),
+            old.managementIp(),old.managementVlan(),old.businessIp(),old.businessVlan(),old.deviceSerialNo(),
+            old.assetOwner(),old.remarks(),coordinateValue(old.latitude()),coordinateValue(old.longitude())};
+        for(int i=0;i<incoming.length;i++) {
+            Object left=current[i],right=incoming[i];
+            if(left instanceof BigDecimal a && right instanceof BigDecimal b) {
+                if(a.compareTo(b)!=0) return false;
+            } else if(!Objects.equals(left,right)) return false;
+        }
+        return true;
     }
     private static BigDecimal coordinateValue(String value) { return value==null||value.isBlank()?null:new BigDecimal(value.trim()); }
     private static String blank(String s) { return s==null||s.isBlank()?null:s.trim(); }
