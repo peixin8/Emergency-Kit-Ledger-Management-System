@@ -8,15 +8,14 @@ import LedgerForm from '../components/LedgerForm.vue'
 import LedgerDetail from '../components/LedgerDetail.vue'
 import LedgerHistory from '../components/LedgerHistory.vue'
 import LedgerLocationMap from '../components/LedgerLocationMap.vue'
-import type { DeviceCondition, Direction, Ledger, LedgerInput, LedgerPage } from '../types/ledger'
-import { conditionLabels, directionLabels } from '../types/ledger'
+import type { Ledger, LedgerInput, LedgerPage } from '../types/ledger'
 import { formatLedgerTimestamp } from '../types/date'
 import { ledgerCoordinates } from '../types/location'
 
 const loading = ref(false)
 const listError = ref('')
 const pageData = ref<LedgerPage>({ records: [], total: 0, page: 1, pageSize: 20 })
-const filter = reactive<{ keyword: string; status: DeviceCondition | ''; direction: Direction | ''; page: number; pageSize: number }>({ keyword: '', status: '', direction: '', page: 1, pageSize: 20 })
+const filter = reactive<{ keyword: string; page: number; pageSize: number }>({ keyword: '', page: 1, pageSize: 20 })
 const drawerVisible = ref(false)
 const drawerMode = ref<'create' | 'edit' | 'detail'>('create')
 const current = ref<Ledger | null>(null)
@@ -45,7 +44,7 @@ async function load() {
   loading.value = true
   listError.value = ''
   try {
-    const result = await listLedgers({ page: filter.page, pageSize: filter.pageSize, keyword: filter.keyword.trim() || undefined, status: filter.status || undefined, direction: filter.direction || undefined }, controller.signal)
+    const result = await listLedgers({ page: filter.page, pageSize: filter.pageSize, keyword: filter.keyword.trim() || undefined }, controller.signal)
     if (sequence === requestSequence) pageData.value = result
   } catch (error) {
     if (sequence === requestSequence) listError.value = error instanceof Error ? error.message : '加载失败'
@@ -54,7 +53,7 @@ async function load() {
   }
 }
 function search() { filter.page = 1; void load() }
-function reset() { filter.keyword = ''; filter.status = ''; filter.direction = ''; filter.page = 1; void load() }
+function reset() { filter.keyword = ''; filter.page = 1; void load() }
 function openCreate() { formSession.value++; detailSequence++; drawerLoading.value = false; current.value = null; drawerMode.value = 'create'; drawerVisible.value = true }
 async function openRecord(id: string, mode: 'edit' | 'detail') {
   const sequence = ++detailSequence
@@ -97,7 +96,7 @@ async function downloadExcel() {
   if (exporting.value) return
   exporting.value = true
   try {
-    const blob = await exportLedgers({ keyword: filter.keyword.trim() || undefined, status: filter.status || undefined, direction: filter.direction || undefined })
+    const blob = await exportLedgers({ keyword: filter.keyword.trim() || undefined })
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
@@ -118,7 +117,7 @@ async function uploadExcel(event: Event) {
   try {
     if (!/\.xlsx$/i.test(file.name)) throw new Error('请选择 .xlsx 文件')
     const result = await importLedgers(file)
-    ElMessage.success(`成功导入 ${result.importedCount} 条台账`)
+    ElMessage.success(`成功导入 ${result.importedCount} 条台账：新增 ${result.createdCount} 条，覆盖 ${result.updatedCount} 条`)
     filter.page = 1
     await load()
     await locationMapRef.value?.reload()
@@ -135,15 +134,14 @@ onMounted(load)
     <div class="overview-strip"><div><span class="overview-icon">▤</span><span><small>当前结果</small><strong>{{ pageData.total }} <em>条记录</em></strong></span></div><div class="overview-note"><span class="status-dot"></span> 数据实时写入共享数据库</div></div>
     <LedgerLocationMap ref="locationMapRef" :selected="selectedCoordinates" @open="id => openRecord(id, 'detail')" />
     <section class="data-panel"><div class="panel-heading"><div><h2>台账记录</h2><p>按编号、位置及设备信息快速检索；点击编号查看详情</p></div><span class="panel-count">共 {{ pageData.total }} 条</span></div>
-      <div class="filter-row"><el-input v-model="filter.keyword" class="search-input" clearable placeholder="搜索编号、地址或联系人" @keyup.enter="search" @clear="search"><template #prefix><el-icon><Search /></el-icon></template></el-input><el-select v-model="filter.direction" clearable placeholder="流转方向" @change="search"><el-option v-for="(label, value) in directionLabels" :key="value" :label="label" :value="value" /></el-select><el-select v-model="filter.status" clearable placeholder="设备状况" @change="search"><el-option v-for="(label, value) in conditionLabels" :key="value" :label="label" :value="value" /></el-select><el-button @click="reset"><el-icon><Refresh /></el-icon> 重置</el-button><el-button type="primary" plain @click="search"><el-icon><Search /></el-icon> 查询</el-button></div>
-      <div class="file-row"><div class="file-actions"><el-button :loading="exporting" @click="downloadExcel"><el-icon><Download /></el-icon> 导出 Excel</el-button><el-button :loading="importing" @click="fileInput?.click()"><el-icon><Upload /></el-icon> 导入 Excel</el-button><input ref="fileInput" type="file" accept=".xlsx" class="visually-hidden" aria-label="选择 Excel 文件" @change="uploadExcel" /><span>可导入现有台账或系统导出的 .xlsx 文件；只新增未使用的台账编号。导入失败时会提示具体行号和列名，整份文件不会部分导入。</span></div><div class="history-lookup"><el-input v-model="historyLookupId" placeholder="已删除台账的 ID" aria-label="历史台账 ID" @keyup.enter="lookupHistory" /><el-button @click="lookupHistory">查询历史</el-button></div></div>
+      <div class="filter-row"><el-input v-model="filter.keyword" class="search-input" clearable placeholder="搜索编号、地址或联系人" @keyup.enter="search" @clear="search"><template #prefix><el-icon><Search /></el-icon></template></el-input><el-button @click="reset"><el-icon><Refresh /></el-icon> 重置</el-button><el-button type="primary" plain @click="search"><el-icon><Search /></el-icon> 查询</el-button></div>
+      <div class="file-row"><div class="file-actions"><el-button :loading="exporting" @click="downloadExcel"><el-icon><Download /></el-icon> 导出 Excel</el-button><el-button :loading="importing" @click="fileInput?.click()"><el-icon><Upload /></el-icon> 导入 Excel</el-button><el-button type="primary" plain @click="openCreate"><el-icon><CirclePlus /></el-icon> 手动新增</el-button><input ref="fileInput" type="file" accept=".xlsx" class="visually-hidden" aria-label="选择 Excel 文件" @change="uploadExcel" /><span>可导入现有台账或系统导出的 .xlsx 文件；Excel 中不同台账编号会生成不同系统 ID，同编号覆盖并保留原 ID，不支持在 Excel 指定系统 ID。覆盖会更新全部业务信息，空白值会清空旧值；旧版模板缺少的可选列也会清空旧值，建议先导出新版文件后编辑重导入。导入失败时会提示具体行号和列名，整份文件不会部分导入。</span></div><div class="history-lookup"><el-input v-model="historyLookupId" placeholder="已删除台账的 ID" aria-label="历史台账 ID" @keyup.enter="lookupHistory" /><el-button @click="lookupHistory">查询历史</el-button></div></div>
       <div v-if="listError" class="list-error" role="alert"><span>{{ listError }}</span><el-button link type="primary" @click="load">重试</el-button></div>
       <el-table v-loading="loading" :data="pageData.records" class="ledger-table" empty-text="暂无台账记录，可点击右上角新增" height="min(58vh, 570px)" row-key="id">
         <el-table-column label="台账编号" min-width="165"><template #default="{ row }"><button class="record-link" @click="openRecord(row.id, 'detail')">{{ row.ledgerCode }} <el-icon><ArrowRight /></el-icon></button><small class="table-sub">ID {{ row.id }}</small></template></el-table-column>
-        <el-table-column label="流转方向" width="105"><template #default="{ row }"><span class="direction-badge" :class="row.direction.toLowerCase()">{{ directionLabels[row.direction as Direction] }}</span></template></el-table-column>
         <el-table-column label="原始地址 → 目标地址" min-width="260"><template #default="{ row }"><div class="address-cell"><span>{{ row.originalAddress }}</span><el-icon><ArrowRight /></el-icon><span>{{ row.destinationAddress }}</span></div></template></el-table-column>
-        <el-table-column label="设备状况" width="118"><template #default="{ row }"><span class="condition-pill" :class="row.deviceCondition.toLowerCase()"><span class="status-dot"></span>{{ conditionLabels[row.deviceCondition as DeviceCondition] }}</span></template></el-table-column>
         <el-table-column label="更新时间" width="165"><template #default="{ row }">{{ formatLedgerTimestamp(row.updatedAt) }}</template></el-table-column>
+        <el-table-column label="操作" width="145"><template #default="{ row }"><div class="row-actions"><el-button link type="primary" :aria-label="`编辑台账 ${row.ledgerCode}`" @click="openRecord(row.id, 'edit')">编辑</el-button><el-button link type="danger" :aria-label="`删除台账 ${row.ledgerCode}`" @click="remove(row)">删除</el-button></div></template></el-table-column>
       </el-table>
       <div class="table-footer"><span>显示第 {{ pageData.total ? (filter.page - 1) * filter.pageSize + 1 : 0 }}–{{ Math.min(filter.page * filter.pageSize, pageData.total) }} 条，共 {{ pageData.total }} 条</span><el-pagination v-model:current-page="filter.page" v-model:page-size="filter.pageSize" :total="pageData.total" :page-sizes="[10, 20, 50, 100]" layout="sizes, prev, pager, next" background @current-change="load" /></div>
     </section>

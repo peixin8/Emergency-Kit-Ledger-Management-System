@@ -102,6 +102,12 @@ public class LedgerRepository {
         Long count=jdbc.queryForObject("SELECT COUNT(*) FROM emergency_device_ledger WHERE ledger_code=? AND id<>?",Long.class,code,exceptId);
         return count!=null&&count>0;
     }
+    public CodeMatch codeMatch(long organizationId,String code) {
+        List<CodeMatch> rows=jdbc.query("SELECT id,deleted FROM emergency_device_ledger WHERE organization_id=? AND ledger_code=?",
+            (rs,row) -> new CodeMatch(rs.getLong("id"),rs.getBoolean("deleted")),organizationId,code);
+        return rows.isEmpty()?null:rows.get(0);
+    }
+    public record CodeMatch(long id,boolean deleted) {}
     public record Page(List<LedgerRecord> records,long total,int page,int pageSize) {}
     public record MapPoint(String id,String ledgerCode,String destinationAddress,String deviceCondition,String latitude,String longitude) {}
     public record MapPoints(List<MapPoint> records,long unlocatedCount) {}

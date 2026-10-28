@@ -49,9 +49,9 @@ describe('台账请求', () => {
     expect(new Headers(fetcher.mock.calls[0]?.[1]?.headers).has('Authorization')).toBe(false)
   })
   it('Excel 导入使用 multipart 而非 JSON', async () => {
-    const fetcher = vi.spyOn(globalThis, 'fetch').mockResolvedValue(success({ importedCount: 1 }))
+    const fetcher = vi.spyOn(globalThis, 'fetch').mockResolvedValue(success({ importedCount: 1, createdCount: 0, updatedCount: 1 }))
     const result = await importLedgers(new File(['xlsx'], 'ledger.xlsx'))
-    expect(result.importedCount).toBe(1)
+    expect(result).toEqual({ importedCount: 1, createdCount: 0, updatedCount: 1 })
     expect(fetcher.mock.calls[0]?.[1]?.body).toBeInstanceOf(FormData)
     expect(new Headers(fetcher.mock.calls[0]?.[1]?.headers).has('Content-Type')).toBe(false)
   })

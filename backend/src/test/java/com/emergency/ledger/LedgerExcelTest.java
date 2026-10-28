@@ -61,7 +61,7 @@ class LedgerExcelTest {
         assertThat(jdbc.queryForObject("SELECT latitude FROM emergency_device_ledger WHERE ledger_code=?",java.math.BigDecimal.class,oldCode)).isNull();
     }
 
-    @Test void exportImportsNewCodeAndRejectsDuplicateWithoutPartialWrite() throws Exception {
+    @Test void exportImportsNewCodeAndRejectsDuplicateWithinFileWithoutPartialWrite() throws Exception {
         String original = "EXCEL-" + System.nanoTime();
         String request = json.writeValueAsString(Map.ofEntries(
             Map.entry("ledgerCode",original), Map.entry("originalAddress","源机房"),
@@ -84,7 +84,9 @@ class LedgerExcelTest {
             ByteArrayOutputStream out = new ByteArrayOutputStream(); xlsx.write(out); workbook = out.toByteArray();
         }
         mvc.perform(multipart("/api/v1/ledgers/import").file(file(workbook)))
-            .andExpect(status().isOk()).andExpect(jsonPath("$.data.importedCount").value(1));
+            .andExpect(status().isOk()).andExpect(jsonPath("$.data.importedCount").value(1))
+            .andExpect(jsonPath("$.data.createdCount").value(1))
+            .andExpect(jsonPath("$.data.updatedCount").value(0));
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM emergency_device_ledger WHERE ledger_code=?",Integer.class,imported)).isEqualTo(1);
 
         String valid = "ROLLBACK-" + System.nanoTime();
@@ -96,12 +98,166 @@ class LedgerExcelTest {
             for (int col=0; col<sheet.getRow(1).getLastCellNum(); col++) {
                 duplicate.createCell(col).setCellValue(sheet.getRow(1).getCell(col).getStringCellValue());
             }
-            duplicate.getCell(0).setCellValue(original);
+            duplicate.getCell(0).setCellValue(valid);
             ByteArrayOutputStream out = new ByteArrayOutputStream(); xlsx.write(out); invalidFile = out.toByteArray();
         }
         mvc.perform(multipart("/api/v1/ledgers/import").file(file(invalidFile)))
             .andExpect(status().isConflict()).andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("第 3 行")));
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM emergency_device_ledger WHERE ledger_code=?",Integer.class,valid)).isZero();
+    }
+
+    @Test void reimportOverwritesEveryBusinessFieldButPreservesIdentityAndHistory() throws Exception {
+        String code="OVERWRITE-"+System.nanoTime();
+        String absent="ABSENT-"+System.nanoTime();
+        String body=json.writeValueAsString(Map.ofEntries(
+            Map.entry("ledgerCode",code),Map.entry("originalAddress","旧原址"),Map.entry("destinationAddress","旧目标"),
+            Map.entry("applicationMethod","ONLINE"),Map.entry("applicantContact","旧联系人"),Map.entry("applicantPhone","13800000000"),
+            Map.entry("deviceCondition","GOOD"),Map.entry("deviceConditionDetail","旧说明"),Map.entry("direction","IN"),
+            Map.entry("applicationDate","2026-10-27"),Map.entry("ptnPort","旧端口"),Map.entry("latitude","24.4"),Map.entry("longitude","118.1")));
+        mvc.perform(post("/api/v1/ledgers").contentType(MediaType.APPLICATION_JSON).content(body)).andExpect(status().isCreated());
+        mvc.perform(post("/api/v1/ledgers").contentType(MediaType.APPLICATION_JSON)
+            .content(body.replace(code,absent))).andExpect(status().isCreated());
+        var before=jdbc.queryForMap("SELECT id,created_at,version FROM emergency_device_ledger WHERE ledger_code=?",code);
+        byte[] exported=mvc.perform(get("/api/v1/ledgers/export").param("keyword",code))
+            .andExpect(status().isOk()).andReturn().getResponse().getContentAsByteArray();
+        byte[] replacement;
+        try(XSSFWorkbook xlsx=new XSSFWorkbook(new ByteArrayInputStream(exported));ByteArrayOutputStream out=new ByteArrayOutputStream()) {
+            var row=xlsx.getSheetAt(0).getRow(1);
+            row.getCell(1).setCellValue("新原址"); row.getCell(2).setCellValue("新目标");
+            row.getCell(4).setCellValue("新联系人"); row.getCell(5).setCellValue("");
+            row.getCell(9).setCellValue(""); row.getCell(23).setCellValue("");
+            row.getCell(24).setCellValue(""); row.getCell(25).setCellValue("");
+            xlsx.write(out); replacement=out.toByteArray();
+        }
+        mvc.perform(multipart("/api/v1/ledgers/import").file(file(replacement)))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.data.importedCount").value(1))
+            .andExpect(jsonPath("$.data.createdCount").value(0))
+            .andExpect(jsonPath("$.data.updatedCount").value(1));
+        var after=jdbc.queryForMap("SELECT id,created_at,version,original_address,destination_address,applicant_contact,applicant_phone,ptn_port,device_condition_detail,latitude,longitude FROM emergency_device_ledger WHERE ledger_code=?",code);
+        assertThat(after.get("id")).isEqualTo(before.get("id"));
+        assertThat(after.get("created_at")).isEqualTo(before.get("created_at"));
+        assertThat(((Number)after.get("version")).longValue()).isEqualTo(((Number)before.get("version")).longValue()+1);
+        assertThat(after.get("original_address")).isEqualTo("新原址");
+        assertThat(after.get("destination_address")).isEqualTo("新目标");
+        assertThat(after.get("applicant_contact")).isEqualTo("新联系人");
+        assertThat(after.get("applicant_phone")).isNull();
+        assertThat(after.get("ptn_port")).isNull();
+        assertThat(after.get("device_condition_detail")).isNull();
+        assertThat(after.get("latitude")).isNull();
+        assertThat(after.get("longitude")).isNull();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM emergency_device_ledger WHERE ledger_code=?",Integer.class,absent)).isEqualTo(1);
+        var actions=jdbc.queryForList("SELECT action FROM ledger_audit WHERE ledger_id=? ORDER BY id",String.class,before.get("id"));
+        assertThat(actions).containsExactly("CREATE","UPDATE");
+    }
+
+    @Test void deletedCodeRejectsBatchAndRollsBackEarlierUpdatesAndCreates() throws Exception {
+        String active="BATCH-ACTIVE-"+System.nanoTime();
+        String deleted="BATCH-DELETED-"+System.nanoTime();
+        String created="BATCH-NEW-"+System.nanoTime();
+        String template=json.writeValueAsString(Map.ofEntries(
+            Map.entry("ledgerCode",active),Map.entry("originalAddress","旧地址"),Map.entry("destinationAddress","目标"),
+            Map.entry("applicationMethod","ONLINE"),Map.entry("applicantContact","联系人"),Map.entry("deviceCondition","GOOD"),
+            Map.entry("direction","IN"),Map.entry("applicationDate","2026-10-27")));
+        mvc.perform(post("/api/v1/ledgers").contentType(MediaType.APPLICATION_JSON).content(template)).andExpect(status().isCreated());
+        String deletedResponse=mvc.perform(post("/api/v1/ledgers").contentType(MediaType.APPLICATION_JSON)
+            .content(template.replace(active,deleted))).andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        String deletedId=json.readTree(deletedResponse).path("data").path("id").asText();
+        mvc.perform(delete("/api/v1/ledgers/"+deletedId)).andExpect(status().isOk());
+        byte[] exported=mvc.perform(get("/api/v1/ledgers/export").param("keyword",active))
+            .andExpect(status().isOk()).andReturn().getResponse().getContentAsByteArray();
+        byte[] workbook;
+        try(XSSFWorkbook xlsx=new XSSFWorkbook(new ByteArrayInputStream(exported));ByteArrayOutputStream out=new ByteArrayOutputStream()) {
+            var sheet=xlsx.getSheetAt(0); var first=sheet.getRow(1);
+            first.getCell(1).setCellValue("覆盖地址");
+            var second=sheet.createRow(2); var third=sheet.createRow(3);
+            for(int col=0;col<first.getLastCellNum();col++) {
+                String value=first.getCell(col).getStringCellValue();
+                second.createCell(col).setCellValue(value); third.createCell(col).setCellValue(value);
+            }
+            second.getCell(0).setCellValue(created); third.getCell(0).setCellValue(deleted);
+            xlsx.write(out); workbook=out.toByteArray();
+        }
+        mvc.perform(multipart("/api/v1/ledgers/import").file(file(workbook)))
+            .andExpect(status().isConflict()).andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("第 4 行")));
+        assertThat(jdbc.queryForObject("SELECT original_address FROM emergency_device_ledger WHERE ledger_code=?",String.class,active)).isEqualTo("旧地址");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM emergency_device_ledger WHERE ledger_code=?",Integer.class,created)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ledger_audit WHERE ledger_id=(SELECT id FROM emergency_device_ledger WHERE ledger_code=?)",Integer.class,active)).isEqualTo(1);
+    }
+
+    @Test void olderTemplateClearsFieldsThatHaveNoColumns() throws Exception {
+        String code="OLD-CLEAR-"+System.nanoTime();
+        String body=json.writeValueAsString(Map.ofEntries(
+            Map.entry("ledgerCode",code),Map.entry("originalAddress","原址"),Map.entry("destinationAddress","目标"),
+            Map.entry("applicationMethod","ONLINE"),Map.entry("applicantContact","联系人"),Map.entry("deviceCondition","GOOD"),
+            Map.entry("direction","IN"),Map.entry("applicationDate","2026-10-27"),Map.entry("ptnPort","旧 PTN"),
+            Map.entry("deviceConditionDetail","旧说明"),Map.entry("latitude","24.4"),Map.entry("longitude","118.1")));
+        mvc.perform(post("/api/v1/ledgers").contentType(MediaType.APPLICATION_JSON).content(body)).andExpect(status().isCreated());
+        byte[] exported=mvc.perform(get("/api/v1/ledgers/export").param("keyword",code))
+            .andExpect(status().isOk()).andReturn().getResponse().getContentAsByteArray();
+        byte[] oldWorkbook;
+        try(XSSFWorkbook source=new XSSFWorkbook(new ByteArrayInputStream(exported));XSSFWorkbook old=new XSSFWorkbook();ByteArrayOutputStream out=new ByteArrayOutputStream()) {
+            var sourceSheet=source.getSheetAt(0); var oldSheet=old.createSheet("旧版");
+            for(int line=0;line<=1;line++) {
+                var row=oldSheet.createRow(line);
+                for(int col=0;col<22;col++) {
+                    int sourceCol=col<9?col:col+1;
+                    row.createCell(col).setCellValue(sourceSheet.getRow(line).getCell(sourceCol).getStringCellValue());
+                }
+            }
+            old.write(out); oldWorkbook=out.toByteArray();
+        }
+        mvc.perform(multipart("/api/v1/ledgers/import").file(file(oldWorkbook)))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.data.updatedCount").value(1));
+        var row=jdbc.queryForMap("SELECT ptn_port,device_condition_detail,latitude,longitude FROM emergency_device_ledger WHERE ledger_code=?",code);
+        assertThat(row.values()).containsOnlyNulls();
+    }
+
+    @Test void reimportReplacesEveryBusinessColumnIncludingStatusNetworkAndAssetFields() throws Exception {
+        String prefix="ALL-FIELDS-"+System.nanoTime()+"-";
+        mvc.perform(multipart("/api/v1/ledgers/import").file(file(sourceWorkbook(prefix))))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.data.createdCount").value(11));
+        String code=prefix+"2";
+        byte[] exported=mvc.perform(get("/api/v1/ledgers/export").param("keyword",code))
+            .andExpect(status().isOk()).andReturn().getResponse().getContentAsByteArray();
+        byte[] replacement;
+        try(XSSFWorkbook xlsx=new XSSFWorkbook(new ByteArrayInputStream(exported));ByteArrayOutputStream out=new ByteArrayOutputStream()) {
+            var row=xlsx.getSheetAt(0).getRow(1);
+            String[] values={code,"新原址","新目标","纸质","新联系人","13900000000","维修中","出","2026-10-28",
+                "NEW-PTN","新机房","24","5G","NEW-BBU","NEW-RRU","12.50","192.0.2.10","100",
+                "198.51.100.10","200","NEW-SN","NEW-OWNER","NEW-REMARKS","NEW-DETAIL","24.5","118.2"};
+            for(int col=0;col<values.length;col++) row.getCell(col).setCellValue(values[col]);
+            xlsx.write(out); replacement=out.toByteArray();
+        }
+        mvc.perform(multipart("/api/v1/ledgers/import").file(file(replacement)))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.data.updatedCount").value(1));
+        String id=jdbc.queryForObject("SELECT CAST(id AS VARCHAR) FROM emergency_device_ledger WHERE ledger_code=?",String.class,code);
+        mvc.perform(get("/api/v1/ledgers/"+id)).andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.ledgerCode").value(code))
+            .andExpect(jsonPath("$.data.originalAddress").value("新原址"))
+            .andExpect(jsonPath("$.data.destinationAddress").value("新目标"))
+            .andExpect(jsonPath("$.data.applicationMethod").value("PAPER"))
+            .andExpect(jsonPath("$.data.applicantContact").value("新联系人"))
+            .andExpect(jsonPath("$.data.applicantPhone").value("13900000000"))
+            .andExpect(jsonPath("$.data.deviceCondition").value("REPAIR"))
+            .andExpect(jsonPath("$.data.deviceConditionDetail").value("NEW-DETAIL"))
+            .andExpect(jsonPath("$.data.direction").value("OUT"))
+            .andExpect(jsonPath("$.data.applicationDate").value("2026-10-28"))
+            .andExpect(jsonPath("$.data.ptnPort").value("NEW-PTN"))
+            .andExpect(jsonPath("$.data.accessRoom").value("新机房"))
+            .andExpect(jsonPath("$.data.fiberCore").value("24"))
+            .andExpect(jsonPath("$.data.networkStandard").value("5G"))
+            .andExpect(jsonPath("$.data.bbuModel").value("NEW-BBU"))
+            .andExpect(jsonPath("$.data.rruModel").value("NEW-RRU"))
+            .andExpect(jsonPath("$.data.bbuRruPowerWatts").value("12.50"))
+            .andExpect(jsonPath("$.data.managementIp").value("192.0.2.10"))
+            .andExpect(jsonPath("$.data.managementVlan").value(100))
+            .andExpect(jsonPath("$.data.businessIp").value("198.51.100.10"))
+            .andExpect(jsonPath("$.data.businessVlan").value(200))
+            .andExpect(jsonPath("$.data.deviceSerialNo").value("NEW-SN"))
+            .andExpect(jsonPath("$.data.assetOwner").value("NEW-OWNER"))
+            .andExpect(jsonPath("$.data.remarks").value("NEW-REMARKS"))
+            .andExpect(jsonPath("$.data.latitude").value("24.5"))
+            .andExpect(jsonPath("$.data.longitude").value("118.2"));
     }
 
     private MockMultipartFile file(byte[] bytes) {
