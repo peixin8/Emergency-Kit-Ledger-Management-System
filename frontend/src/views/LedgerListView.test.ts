@@ -88,9 +88,10 @@ beforeEach(() => {
   createLedger.mockReset()
 })
 
-it('导入工具栏提供手动新增入口，打开与右上角一致的空白表单，并说明系统 ID 规则', async () => {
+it('页眉不再显示新增台账，工具栏手动新增仍打开空白表单并说明系统 ID 规则', async () => {
   const wrapper = mountLedgerList()
   await flushPromises()
+  expect(wrapper.find('.page-heading button').exists()).toBe(false)
   const toolbarButton = wrapper.findAll('.file-actions button').find(button => button.text() === '手动新增')
   expect(toolbarButton).toBeDefined()
   await toolbarButton!.trigger('click')
