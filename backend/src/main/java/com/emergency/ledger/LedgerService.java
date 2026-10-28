@@ -17,7 +17,7 @@ public class LedgerService {
         if(page<1||pageSize<1||pageSize>100||((long)page-1)*pageSize>Integer.MAX_VALUE) throw bad("分页参数无效");
         if(keyword!=null&&keyword.length()>100) throw bad("搜索词过长");
         if(status!=null&&!status.isBlank()&&!status.matches("GOOD|REPAIR|FAULT|RETIRED")) throw bad("设备状况无效");
-        if(direction!=null&&!direction.isBlank()&&!direction.matches("IN|OUT|TRANSFER")) throw bad("进出方向无效");
+        if(direction!=null&&!direction.isBlank()&&!direction.matches("IN|OUT|TRANSFER|UNSPECIFIED")) throw bad("进出方向无效");
         return repository.list(page,pageSize,keyword,status,direction);
     }
     public LedgerRecord get(CurrentUser user,long id) {
@@ -25,6 +25,7 @@ public class LedgerService {
         if(record==null) throw new ApiException(HttpStatus.NOT_FOUND,"NOT_FOUND","台账不存在");
         return record;
     }
+    public LedgerRepository.MapPoints mapPoints(CurrentUser user) { return repository.mapPoints(); }
     public LedgerRepository.HistoryPage history(CurrentUser user,long id,int page,int pageSize) {
         validatePage(page,pageSize);
         if(!repository.existsIncludingDeleted(id))
@@ -72,17 +73,36 @@ public class LedgerService {
         if(!"ADMIN".equals(user.role())&&!"EDITOR".equals(user.role())) throw new ApiException(HttpStatus.FORBIDDEN,"FORBIDDEN","无权修改台账");
     }
     private BigDecimal validate(LedgerRequest r,boolean update) {
-        if(r.originalAddress().trim().equals(r.destinationAddress().trim())) throw bad("原始地址与目标地址不能相同");
         if(update) parseVersion(r.version());
         ip(r.managementIp()); ip(r.businessIp());
-        if(r.bbuRruPowerWatts()==null||r.bbuRruPowerWatts().isBlank()) return null;
+        coordinates(r.latitude(),r.longitude());
+        return power(r.bbuRruPowerWatts());
+    }
+    void coordinates(String latitude,String longitude) {
+        boolean hasLatitude=latitude!=null&&!latitude.isBlank();
+        boolean hasLongitude=longitude!=null&&!longitude.isBlank();
+        if(hasLatitude!=hasLongitude) throw bad("纬度和经度必须同时填写");
+        if(hasLatitude) {
+            coordinate(latitude,"纬度",90);
+            coordinate(longitude,"经度",180);
+        }
+    }
+    BigDecimal power(String input) {
+        if(input==null||input.isBlank()) return null;
         try {
-            BigDecimal value=new BigDecimal(r.bbuRruPowerWatts());
+            BigDecimal value=new BigDecimal(input);
             if(value.signum()<0||value.scale()>2||value.precision()-value.scale()>10) throw bad("功耗须为非负数，最多两位小数");
             return value.setScale(2);
         } catch(NumberFormatException e) { throw bad("功耗格式无效"); }
     }
-    private void ip(String input) {
+    private void coordinate(String input,String label,int bound) {
+        String trimmed=input.trim();
+        if(!trimmed.matches("[+-]?(?:[0-9]+)(?:\\.[0-9]{1,7})?")) throw bad(label+"格式无效，最多七位小数");
+        try {
+            if(new BigDecimal(trimmed).abs().compareTo(BigDecimal.valueOf(bound))>0) throw bad(label+"超出范围");
+        } catch(NumberFormatException e) { throw bad(label+"格式无效"); }
+    }
+    void ip(String input) {
         if(input==null||input.isBlank()) return;
         String ip=input.trim();
         if(ip.contains(".")) {

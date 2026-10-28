@@ -12,8 +12,10 @@ public record LedgerRequest(
     @NotBlank @Size(max=100) String applicantContact,
     @Size(max=40) String applicantPhone,
     @NotBlank @Pattern(regexp="GOOD|REPAIR|FAULT|RETIRED") String deviceCondition,
-    @NotBlank @Pattern(regexp="IN|OUT|TRANSFER") String direction,
+    @Size(max=255) String deviceConditionDetail,
+    @NotBlank @Pattern(regexp="IN|OUT|TRANSFER|UNSPECIFIED") String direction,
     @NotNull LocalDate applicationDate,
+    @Size(max=255) String ptnPort,
     @Size(max=120) String accessRoom,
     @Size(max=100) String fiberCore,
     @Size(max=100) String networkStandard,
@@ -27,5 +29,7 @@ public record LedgerRequest(
     @Size(max=120) String deviceSerialNo,
     @Size(max=120) String assetOwner,
     @Size(max=2000) String remarks,
+    String latitude,
+    String longitude,
     String version
 ) {}

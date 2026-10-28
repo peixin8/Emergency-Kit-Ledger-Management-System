@@ -19,6 +19,10 @@ spring:
       max-file-size: 2MB
       max-request-size: 3MB
 app:
+  geocoding:
+    base-url: ${GEOCODING_BASE_URL:https://restapi.amap.com}
+    key: ${AMAP_WEB_SERVICE_KEY:}
+    min-interval-ms: ${GEOCODING_MIN_INTERVAL_MS:1000}
   token-secret: ${APP_TOKEN_SECRET:}
   admin:
     username: ${APP_ADMIN_USERNAME:admin}

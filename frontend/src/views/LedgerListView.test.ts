@@ -1,205 +1,228 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
-import { nextTick } from 'vue'
-import ElementPlus from 'element-plus'
+// @vitest-environment jsdom
+/* eslint-disable vue/one-component-per-file -- 测试专用的表格与抽屉轻量桩组件 */
+import { defineComponent, h, inject, provide, ref, toRef } from 'vue'
+import type { Ref } from 'vue'
+import { flushPromises, mount } from '@vue/test-utils'
+import { beforeEach, expect, it, vi } from 'vitest'
+import { ElMessage } from 'element-plus'
 import LedgerListView from './LedgerListView.vue'
 import type { Ledger } from '../types/ledger'
+import MapCanvas from '../components/MapCanvas.vue'
+import { ApiError } from '../api/http'
 
-// 保留完整响应结构；只替换外部 HTTP，不替换 Drawer/Form/Input 或 Transition。
-const recordA: Ledger = {
-  id: '9007199254740993', organizationId: '1', version: '9007199254740995',
-  createdAt: '2026-10-26T09:00:00+08:00', updatedAt: '2026-10-27T10:00:00+08:00',
-  ledgerCode: 'YJB-A', originalAddress: 'A 原地址', destinationAddress: 'A 目标地址',
-  direction: 'OUT', applicationMethod: 'PHONE', applicantContact: '张三',
-  applicantPhone: '13800000000', applicationDate: '2026-10-26', deviceCondition: 'REPAIR',
-  accessRoom: 'A 机房', fiberCore: 'A 纤芯', networkStandard: '5G', bbuModel: 'BBU-A',
-  rruModel: 'RRU-A', bbuRruPowerWatts: '120.50', managementIp: '10.0.0.1',
-  managementVlan: 100, businessIp: '10.0.1.1', businessVlan: 200,
-  deviceSerialNo: 'SN-A', assetOwner: '运维部', remarks: 'A 备注'
-}
-const recordB: Ledger = {
-  ...recordA, id: '9007199254740994', ledgerCode: 'YJB-B', originalAddress: 'B 原地址',
-  destinationAddress: 'B 目标地址', applicantContact: '李四', remarks: 'B 备注'
-}
-const success = (data: unknown) => new Response(JSON.stringify({ code: 'OK', message: '成功', data, traceId: 'test-success' }), { status: 200, headers: { 'Content-Type': 'application/json' } })
-let wrapper: VueWrapper
-let transitionStyle: HTMLStyleElement
-let saveResponse: () => Promise<Response>
+const listLedgers = vi.fn()
+const getLedger = vi.fn()
+const listLedgerMapPoints = vi.fn()
+const importLedgers = vi.fn()
+vi.mock('../api/ledger', () => ({
+  listLedgers: (...args: unknown[]) => listLedgers(...args),
+  getLedger: (...args: unknown[]) => getLedger(...args),
+  listLedgerMapPoints: (...args: unknown[]) => listLedgerMapPoints(...args),
+  createLedger: vi.fn(), updateLedger: vi.fn(), deleteLedger: vi.fn(),
+  importLedgers: (...args: unknown[]) => importLedgers(...args), exportLedgers: vi.fn()
+}))
 
-function button(text: string, scope: Element = document.body) {
-  const found = [...scope.querySelectorAll<HTMLButtonElement>('button')].find(candidate => candidate.textContent?.trim() === text)
-  if (!found) throw new Error(`未找到按钮：${text}`)
-  return found
+const ledger: Ledger = {
+  id: '9007199254740993', organizationId: '1', version: '1', ledgerCode: 'XM-001',
+  originalAddress: '厦门市思明区', destinationAddress: '厦门市湖里区', direction: 'IN',
+  applicationMethod: 'ONLINE', applicantContact: '张三', applicantPhone: '13800000000',
+  applicationDate: '2026-10-27', deviceCondition: 'GOOD', deviceConditionDetail: null, accessRoom: '机房 A', ptnPort: null,
+  fiberCore: '1', networkStandard: '5G', bbuModel: 'BBU-A', rruModel: 'RRU-A',
+  bbuRruPowerWatts: '100', managementIp: '10.0.0.1', managementVlan: 101,
+  businessIp: '10.1.0.1', businessVlan: 201, deviceSerialNo: 'SN-001',
+  assetOwner: '厦门', remarks: '完整详情', createdAt: '2026-10-27T08:00:00Z',
+  updatedAt: '2026-10-27T08:00:00Z', latitude: '24.4798345', longitude: '118.0894251'
 }
-function drawer() {
-  const found = document.querySelector<HTMLElement>('.ledger-drawer')
-  if (!found) throw new Error('台账抽屉未挂载')
-  return found
-}
-function field(label: string) {
-  const found = [...drawer().querySelectorAll<HTMLElement>('.el-form-item')].find(item => item.querySelector('label')?.textContent?.trim() === label)
-  if (!found) throw new Error(`未找到字段：${label}`)
-  return found
-}
-function input(label: string) {
-  const found = field(label).querySelector<HTMLInputElement | HTMLTextAreaElement>('input, textarea')
-  if (!found) throw new Error(`未找到输入框：${label}`)
-  return found
-}
-async function enter(label: string, value: string) {
-  const control = input(label)
-  control.value = value
-  control.dispatchEvent(new Event('input', { bubbles: true }))
-  await nextTick()
-}
-async function click(target: HTMLElement) {
-  target.click()
-  await nextTick()
-  await flushPromises()
-}
-async function openCreate() {
-  await click(button('新增台账'))
-  await vi.waitFor(() => expect(drawer().classList.contains('open')).toBe(true))
-  await nextTick()
-}
-async function closeAndWait(target = button('取消', drawer())) {
-  await click(target)
-  await vi.waitFor(() => expect(drawer().closest<HTMLElement>('.el-overlay')?.style.display).toBe('none'))
-}
-function expectDefaults(date = '2026-10-27') {
-  for (const label of ['台账编号', '原始地址', '目标地址', '申请联系人', '联系电话', '设备序列号', '接入机房', '纤芯', '制式', '资产归属', 'BBU 型号', 'RRU 型号', 'BBU–RRU 使用功耗（W）', '网管 IP', '网管 VLAN', '业务 IP', '业务 VLAN', '备注']) {
-    expect(input(label).value, label).toBe('')
+
+const rowsKey = Symbol('rows')
+const Table = defineComponent({
+  props: { data: { type: Array, default: () => [] } },
+  setup(props, { slots }) {
+    provide(rowsKey, toRef(props, 'data'))
+    return () => h('div', { class: 'test-table' }, slots.default?.())
   }
-  expect(input('申请日期').value).toBe(date)
-  expect(field('流转方向').textContent).toContain('进场')
-  expect(field('进出申请方式').textContent).toContain('线上申请')
-  expect(field('应急宝设备状况').textContent).toContain('状况良好')
-  expect(drawer().querySelectorAll('.el-form-item__error')).toHaveLength(0)
-}
-async function fillValidCreate() {
-  await enter('台账编号', 'YJB-NEW')
-  await enter('原始地址', '仓库')
-  await enter('目标地址', '应急现场')
-  await enter('申请联系人', '王五')
-  await enter('备注', '本次输入')
+})
+const Column = defineComponent({
+  props: { label: { type: String, default: '' }, prop: { type: String, default: '' } },
+  setup(props, { slots }) {
+    const rows = inject<Ref<Ledger[]>>(rowsKey, ref([]))
+    return () => h('div', { class: 'test-column' }, [
+      h('b', props.label),
+      ...rows.value.map(row => h('div', { class: 'test-row' }, slots.default?.({ row }) ?? String(Reflect.get(row, props.prop) ?? '')))
+    ])
+  }
+})
+const Drawer = defineComponent({
+  props: { modelValue: Boolean, title: { type: String, default: '' } },
+  setup(props, { slots }) { return () => props.modelValue ? h('aside', { class: 'test-drawer' }, [h('h2', props.title), slots.default?.(), slots.footer?.()]) : null }
+})
+
+function mountLedgerList() {
+  return mount(LedgerListView, { global: {
+    directives: { loading: () => {} },
+    stubs: {
+      'el-table': Table, 'el-table-column': Column, 'el-drawer': Drawer,
+      'el-button': { emits: ['click'], template: '<button @click="$emit(\'click\')"><slot /></button>' },
+      'el-input': true, 'el-select': true, 'el-option': true, 'el-icon': true,
+      'el-pagination': true, LedgerForm: true, LedgerHistory: true, MapCanvas: true,
+      'el-tag': { template: '<span><slot /></span>' }
+    }
+  } })
 }
 
-beforeEach(async () => {
-  vi.setSystemTime(new Date('2026-10-27T04:00:00Z'))
-  // jsdom 没有布局观察器；不替换组件行为。
-  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
-  saveResponse = async () => success({ ...recordA, ledgerCode: 'YJB-NEW' })
-  vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, options) => {
-    const path = String(url)
-    if (options?.method === 'POST' || options?.method === 'PUT') return saveResponse()
-    if (path.includes('/ledgers?')) return success({ records: [recordA, recordB], total: 2, page: 1, pageSize: 20 })
-    if (path.endsWith(`/${recordA.id}`)) return success(recordA)
-    if (path.endsWith(`/${recordB.id}`)) return success(recordB)
-    throw new Error(`未安排的 HTTP 请求：${path}`)
+beforeEach(() => {
+  listLedgers.mockReset().mockResolvedValue({ records: [ledger], total: 1, page: 1, pageSize: 20 })
+  getLedger.mockReset().mockResolvedValue(ledger)
+  listLedgerMapPoints.mockReset().mockResolvedValue({
+    records: [{ id: ledger.id, ledgerCode: ledger.ledgerCode, destinationAddress: ledger.destinationAddress, deviceCondition: ledger.deviceCondition, latitude: '24.4798345', longitude: '118.0894251' }],
+    unlocatedCount: 2
   })
-  // 显式保留一个真实 CSS 过渡窗口，快速重开用例不会绕过关闭动画。
-  transitionStyle = document.createElement('style')
-  transitionStyle.textContent = '.el-drawer-fade-enter-active, .el-drawer-fade-leave-active { transition-property: opacity; transition-duration: 0.1s; }'
-  document.head.appendChild(transitionStyle)
-  wrapper = mount(LedgerListView, { attachTo: document.body, global: { plugins: [ElementPlus], stubs: { transition: false, 'transition-group': false, teleport: false } } })
+  importLedgers.mockReset()
+})
+
+it('导入已有台账文件成功后刷新列表和地图，展示新增的台账', async () => {
+  const imported = { ...ledger, id: '2', ledgerCode: 'XM-002', direction: 'UNSPECIFIED' as const }
+  listLedgers.mockResolvedValueOnce({ records: [ledger], total: 1, page: 1, pageSize: 20 })
+    .mockResolvedValue({ records: [imported, ledger], total: 2, page: 1, pageSize: 20 })
+  importLedgers.mockResolvedValue({ importedCount: 1 })
+  const wrapper = mountLedgerList()
   await flushPromises()
+  expect(wrapper.text()).toContain('可导入现有台账')
+  const fileInput = wrapper.find<HTMLInputElement>('input[type="file"]')
+  const file = new File(['fake xlsx bytes'], '现有台账.xlsx')
+  Object.defineProperty(fileInput.element, 'files', { configurable: true, value: [file] })
+  await fileInput.trigger('change')
+  await flushPromises()
+  expect(importLedgers).toHaveBeenCalledWith(file)
+  expect(listLedgers).toHaveBeenCalledTimes(2)
+  expect(listLedgerMapPoints).toHaveBeenCalledTimes(2)
+  expect(wrapper.find('.test-table').text()).toContain('XM-002')
+  expect(wrapper.find('.test-table').text()).toContain('未填写')
+  wrapper.unmount()
 })
-afterEach(() => {
-  wrapper?.unmount()
-  transitionStyle?.remove()
-  document.body.replaceChildren()
-  vi.restoreAllMocks()
-  vi.unstubAllGlobals()
-  vi.useRealTimers()
+
+it('导入校验失败时显示后台给出的行号和列名，不刷新列表', async () => {
+  const message = '第 4 行「BBU-RRU功耗」：单位不受支持'
+  importLedgers.mockRejectedValue(new ApiError(400, 'VALIDATION_ERROR', message))
+  const error = vi.spyOn(ElMessage, 'error').mockImplementation(() => ({ close: () => {} }) as ReturnType<typeof ElMessage.error>)
+  try {
+    const wrapper = mountLedgerList()
+    await flushPromises()
+    const fileInput = wrapper.find<HTMLInputElement>('input[type="file"]')
+    Object.defineProperty(fileInput.element, 'files', { configurable: true, value: [new File(['fake'], '现有台账.xlsx')] })
+    await fileInput.trigger('change')
+    await flushPromises()
+    expect(error).toHaveBeenCalledWith(expect.objectContaining({ message }))
+    expect(listLedgers).toHaveBeenCalledTimes(1)
+    expect(listLedgerMapPoints).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  } finally { error.mockRestore() }
 })
 
-describe('新增台账独立表单会话', () => {
-  it('取消后再次新增清空草稿和旧校验，并按当前日期初始化', async () => {
-    await openCreate()
-    await enter('备注', '不应带到下次的草稿')
-    await click(button('保存台账', drawer()))
-    await vi.waitFor(() => expect(drawer().textContent).toContain('请输入台账编号'))
-    await closeAndWait()
-    vi.setSystemTime(new Date('2026-10-28T04:00:00Z'))
-    await openCreate()
-    expectDefaults('2026-10-28')
-  })
+it('主表仅显示摘要，点击台账编号后显示完整详情与后续操作', async () => {
+  const wrapper = mountLedgerList()
+  await flushPromises()
 
-  it('使用抽屉关闭按钮后再次新增清空输入', async () => {
-    await openCreate()
-    await fillValidCreate()
-    await closeAndWait(drawer().querySelector<HTMLButtonElement>('.el-drawer__close-btn')!)
-    await openCreate()
-    expectDefaults()
-  })
+  const table = wrapper.find('.test-table')
+  expect(table.text()).toContain('XM-001')
+  expect(table.text()).not.toContain('张三')
+  expect(table.text()).not.toContain('网管 IP')
+  expect(table.text()).not.toContain('10.0.0.1')
+  expect(table.findAll('.test-column').length).toBeLessThanOrEqual(5)
 
-  it('关闭动画未结束立即重开也创建空白会话', async () => {
-    await openCreate()
-    await enter('台账编号', '上次草稿')
-    await click(button('取消', drawer()))
-    expect(drawer().closest('.el-overlay')?.classList.contains('el-drawer-fade-leave-active')).toBe(true)
-    await openCreate()
-    expectDefaults()
-    // 确认过渡结束后新会话仍可编辑，不会被旧 closed 回调清走。
-    await vi.waitFor(() => expect(drawer().closest('.el-overlay')?.className).not.toContain('fade-'))
-    await enter('台账编号', '新草稿')
-    expect(input('台账编号').value).toBe('新草稿')
-  })
+  await table.find('button.record-link').trigger('click')
+  await flushPromises()
+  const detail = wrapper.find('.test-drawer')
+  expect(detail.text()).toContain('台账详情')
+  expect(detail.text()).toContain('张三')
+  expect(detail.text()).toContain('网管 IP')
+  expect(detail.text()).toContain('10.0.0.1')
+  expect(detail.text()).toContain('纬度')
+  expect(detail.text()).toContain('24.4798345')
+  expect(detail.text()).toContain('编辑记录')
+  expect(detail.text()).toContain('历史记录')
+  expect(detail.text()).toContain('删除台账')
+  await detail.findAll('button').find(button => button.text() === '编辑记录')!.trigger('click')
+  await flushPromises()
+  expect(wrapper.find('.test-drawer h2').text()).toBe('编辑台账')
 
-  it('保存成功后再次新增恢复默认值', async () => {
-    await openCreate()
-    await fillValidCreate()
-    await click(button('保存台账', drawer()))
-    await vi.waitFor(() => expect(document.body.textContent).toContain('台账已创建'))
-    await vi.waitFor(() => expect(drawer().closest<HTMLElement>('.el-overlay')?.style.display).toBe('none'))
-    await openCreate()
-    expectDefaults()
-  })
+  await table.find('button.record-link').trigger('click')
+  await flushPromises()
+  await wrapper.find('.test-drawer').findAll('button').find(button => button.text() === '历史记录')!.trigger('click')
+  expect(wrapper.findAll('.test-drawer')).toHaveLength(1)
+  expect(wrapper.find('.test-drawer h2').text()).toBe('历史记录')
+  wrapper.unmount()
+})
 
-  it('编辑后新增清除记录字段和旧校验', async () => {
-    await click(document.querySelector<HTMLButtonElement>('[aria-label="编辑台账"]')!)
-    await vi.waitFor(() => expect(input('台账编号').value).toBe('YJB-A'))
-    await enter('目标地址', '')
-    await click(button('保存台账', drawer()))
-    await vi.waitFor(() => expect(drawer().textContent).toContain('请输入目标地址'))
-    await closeAndWait()
-    await openCreate()
-    expectDefaults()
-  })
+it('厦门地图逐台展示已定位设备入口与未定位数量，点击点位列表打开完整台账', async () => {
+  const wrapper = mountLedgerList()
+  await flushPromises()
+  expect(wrapper.text()).toContain('厦门设备地图')
+  expect(wrapper.text()).toContain('待定位 2 台')
+  const point = wrapper.find('button.map-point-link')
+  expect(point.text()).toContain('XM-001')
+  await point.trigger('click')
+  await flushPromises()
+  expect(wrapper.find('.test-drawer').text()).toContain('完整详情')
+  wrapper.unmount()
+})
 
-  it('编辑 A 后编辑 B 显示 B 内容，再次新增不沿用编辑内容', async () => {
-    await click(document.querySelectorAll<HTMLButtonElement>('[aria-label="编辑台账"]')[0]!)
-    await vi.waitFor(() => expect(input('台账编号').value).toBe('YJB-A'))
-    expect(input('备注').value).toBe('A 备注')
-    await enter('备注', 'A 未保存内容')
-    await closeAndWait()
-    await click(document.querySelectorAll<HTMLButtonElement>('[aria-label="编辑台账"]')[1]!)
-    await vi.waitFor(() => expect(input('台账编号').value).toBe('YJB-B'))
-    expect(input('原始地址').value).toBe('B 原地址')
-    expect(input('备注').value).toBe('B 备注')
-    await closeAndWait()
-    await openCreate()
-    expectDefaults()
-  })
+it('点击编号后首页地图聚焦完整记录坐标，切换到无坐标记录时清除焦点', async () => {
+  const unlocated = { ...ledger, id: '2', ledgerCode: 'XM-002', latitude: null, longitude: null }
+  listLedgers.mockResolvedValue({ records: [ledger, unlocated], total: 2, page: 1, pageSize: 20 })
+  getLedger.mockImplementation((id: string) => Promise.resolve(id === '2' ? unlocated : ledger))
+  const wrapper = mountLedgerList()
+  await flushPromises()
+  const codes = wrapper.findAll('button.record-link')
+  await codes[0]!.trigger('click')
+  await flushPromises()
+  expect(wrapper.findComponent(MapCanvas).props('selected')).toEqual({ latitude: ledger.latitude, longitude: ledger.longitude })
+  await codes[1]!.trigger('click')
+  await flushPromises()
+  expect(wrapper.findComponent(MapCanvas).props('selected')).toBeNull()
+  wrapper.unmount()
+})
 
-  it('保存失败保留输入并允许重试，提交期间阻止关闭和重复提交', async () => {
-    let finishRequest: (response: Response) => void = () => { throw new Error('请求尚未开始') }
-    saveResponse = () => new Promise<Response>(resolve => { finishRequest = resolve })
-    await openCreate()
-    await fillValidCreate()
-    await click(button('保存台账', drawer()))
-    await vi.waitFor(() => expect(button('取消', drawer()).disabled).toBe(true))
-    await click(button('保存台账', drawer()))
-    await click(drawer().querySelector<HTMLButtonElement>('.el-drawer__close-btn')!)
-    expect(drawer().classList.contains('open')).toBe(true)
-    expect(vi.mocked(fetch).mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(1)
-    finishRequest(new Response(JSON.stringify({ code: 'INTERNAL_ERROR', message: '本次保存失败', data: null, traceId: 'test-failure' }), { status: 500 }))
-    await vi.waitFor(() => expect(document.body.textContent).toContain('本次保存失败'))
-    expect(input('台账编号').value).toBe('YJB-NEW')
-    expect(input('备注').value).toBe('本次输入')
-    expect(button('取消', drawer()).disabled).toBe(false)
-    saveResponse = async () => success({ ...recordA, ledgerCode: 'YJB-NEW' })
-    await click(button('保存台账', drawer()))
-    await vi.waitFor(() => expect(document.body.textContent).toContain('台账已创建'))
-  })
+it('已定位详情切换到读取失败的记录时立即清除旧焦点，失败后不展示旧详情', async () => {
+  const second = { ...ledger, id: '2', ledgerCode: 'XM-002' }
+  listLedgers.mockResolvedValue({ records: [ledger, second], total: 2, page: 1, pageSize: 20 })
+  getLedger.mockImplementation((id: string) => id === '2' ? Promise.reject(new Error('读取失败')) : Promise.resolve(ledger))
+  const wrapper = mountLedgerList()
+  await flushPromises()
+  const codes = wrapper.findAll('button.record-link')
+  await codes[0]!.trigger('click')
+  await flushPromises()
+  expect(wrapper.findComponent(MapCanvas).props('selected')).toEqual({ latitude: ledger.latitude, longitude: ledger.longitude })
+
+  await codes[1]!.trigger('click')
+  expect(wrapper.findComponent(MapCanvas).props('selected')).toBeNull()
+  await flushPromises()
+  expect(wrapper.find('.test-drawer').exists()).toBe(false)
+  expect(wrapper.findComponent(MapCanvas).props('selected')).toBeNull()
+  wrapper.unmount()
+})
+
+it('快速切换台账时旧请求晚返回也不能覆盖新点位和新详情', async () => {
+  const second = { ...ledger, id: '2', ledgerCode: 'XM-002', destinationAddress: '厦门市集美区', latitude: '24.5750000', longitude: '118.1000000' }
+  listLedgers.mockResolvedValue({ records: [ledger, second], total: 2, page: 1, pageSize: 20 })
+  let resolveFirst: (value: Ledger) => void = () => { throw new Error('旧请求未初始化') }
+  const delayedFirst = new Promise<Ledger>(resolve => { resolveFirst = resolve })
+  getLedger.mockImplementation((id: string) => id === '2' ? Promise.resolve(second) : delayedFirst)
+  const wrapper = mountLedgerList()
+  await flushPromises()
+  const codes = wrapper.findAll('button.record-link')
+  await codes[0]!.trigger('click')
+  await flushPromises()
+  expect(wrapper.findComponent(MapCanvas).props('selected')).toBeNull()
+
+  await codes[1]!.trigger('click')
+  await flushPromises()
+  expect(wrapper.findComponent(MapCanvas).props('selected')).toEqual({ latitude: second.latitude, longitude: second.longitude })
+  expect(wrapper.find('.test-drawer').text()).toContain('XM-002')
+  resolveFirst(ledger)
+  await flushPromises()
+  expect(wrapper.findComponent(MapCanvas).props('selected')).toEqual({ latitude: second.latitude, longitude: second.longitude })
+  expect(wrapper.find('.test-drawer').text()).toContain('XM-002')
+  expect(wrapper.find('.test-drawer').text()).not.toContain('XM-001')
+  wrapper.unmount()
 })

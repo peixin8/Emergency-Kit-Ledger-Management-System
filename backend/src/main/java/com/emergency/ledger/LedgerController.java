@@ -17,6 +17,9 @@ public class LedgerController {
     @GetMapping public ApiResponse<LedgerRepository.Page> list(@RequestParam(defaultValue="1") int page,@RequestParam(defaultValue="20") int pageSize,@RequestParam(required=false) String keyword,@RequestParam(required=false) String status,@RequestParam(required=false) String direction) {
         return ApiResponse.ok(service.list(identity.current(),page,pageSize,keyword,status,direction));
     }
+    @GetMapping("/map-points") public ApiResponse<LedgerRepository.MapPoints> mapPoints() {
+        return ApiResponse.ok(service.mapPoints(identity.current()));
+    }
     @GetMapping("/{id}") public ApiResponse<LedgerRecord> get(@PathVariable long id) { return ApiResponse.ok(service.get(identity.current(),id)); }
     @GetMapping("/{id}/history") public ApiResponse<LedgerRepository.HistoryPage> history(@PathVariable long id,@RequestParam(defaultValue="1") int page,@RequestParam(defaultValue="20") int pageSize) {
         return ApiResponse.ok(service.history(identity.current(),id,page,pageSize));

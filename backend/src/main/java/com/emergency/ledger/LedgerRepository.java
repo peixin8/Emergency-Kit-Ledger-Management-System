@@ -22,19 +22,21 @@ public class LedgerRepository {
     private final JdbcTemplate jdbc;
     private final ObjectMapper json;
     public LedgerRepository(JdbcTemplate jdbc, ObjectMapper json) { this.jdbc=jdbc; this.json=json; }
-    private static final String FIELDS = "id,organization_id,ledger_code,original_address,destination_address,application_method,applicant_contact,applicant_phone,device_condition,direction,application_date,access_room,fiber_core,network_standard,bbu_model,rru_model,bbu_rru_power_watts,management_ip,management_vlan,business_ip,business_vlan,device_serial_no,asset_owner,remarks,created_at,updated_at,version";
-    private static final String VALUES = "ledger_code=?,original_address=?,destination_address=?,application_method=?,applicant_contact=?,applicant_phone=?,device_condition=?,direction=?,application_date=?,access_room=?,fiber_core=?,network_standard=?,bbu_model=?,rru_model=?,bbu_rru_power_watts=?,management_ip=?,management_vlan=?,business_ip=?,business_vlan=?,device_serial_no=?,asset_owner=?,remarks=?";
+    private static final String FIELDS = "id,organization_id,ledger_code,original_address,destination_address,application_method,applicant_contact,applicant_phone,device_condition,device_condition_detail,direction,application_date,ptn_port,access_room,fiber_core,network_standard,bbu_model,rru_model,bbu_rru_power_watts,management_ip,management_vlan,business_ip,business_vlan,device_serial_no,asset_owner,remarks,latitude,longitude,created_at,updated_at,version";
+    private static final String VALUES = "ledger_code=?,original_address=?,destination_address=?,application_method=?,applicant_contact=?,applicant_phone=?,device_condition=?,device_condition_detail=?,direction=?,application_date=?,ptn_port=?,access_room=?,fiber_core=?,network_standard=?,bbu_model=?,rru_model=?,bbu_rru_power_watts=?,management_ip=?,management_vlan=?,business_ip=?,business_vlan=?,device_serial_no=?,asset_owner=?,remarks=?,latitude=?,longitude=?";
     private static final RowMapper<LedgerRecord> MAPPER = (rs,row) -> new LedgerRecord(
         Long.toString(rs.getLong("id")),Long.toString(rs.getLong("organization_id")),rs.getString("ledger_code"),rs.getString("original_address"),rs.getString("destination_address"),
-        rs.getString("application_method"),rs.getString("applicant_contact"),rs.getString("applicant_phone"),rs.getString("device_condition"),rs.getString("direction"),
-        rs.getObject("application_date",LocalDate.class),rs.getString("access_room"),rs.getString("fiber_core"),rs.getString("network_standard"),rs.getString("bbu_model"),rs.getString("rru_model"),
+        rs.getString("application_method"),rs.getString("applicant_contact"),rs.getString("applicant_phone"),rs.getString("device_condition"),rs.getString("device_condition_detail"),rs.getString("direction"),
+        rs.getObject("application_date",LocalDate.class),rs.getString("ptn_port"),rs.getString("access_room"),rs.getString("fiber_core"),rs.getString("network_standard"),rs.getString("bbu_model"),rs.getString("rru_model"),
         decimal(rs,"bbu_rru_power_watts"),rs.getString("management_ip"),intOrNull(rs,"management_vlan"),rs.getString("business_ip"),intOrNull(rs,"business_vlan"),
-        rs.getString("device_serial_no"),rs.getString("asset_owner"),rs.getString("remarks"),rs.getObject("created_at",LocalDateTime.class).atZone(ZoneId.of("Asia/Shanghai")).toOffsetDateTime(),rs.getObject("updated_at",LocalDateTime.class).atZone(ZoneId.of("Asia/Shanghai")).toOffsetDateTime(),Long.toString(rs.getLong("version")));
+        rs.getString("device_serial_no"),rs.getString("asset_owner"),rs.getString("remarks"),coordinate(rs,"latitude"),coordinate(rs,"longitude"),rs.getObject("created_at",LocalDateTime.class).atZone(ZoneId.of("Asia/Shanghai")).toOffsetDateTime(),rs.getObject("updated_at",LocalDateTime.class).atZone(ZoneId.of("Asia/Shanghai")).toOffsetDateTime(),Long.toString(rs.getLong("version")));
     private static String decimal(ResultSet rs,String key) throws SQLException { BigDecimal v=rs.getBigDecimal(key); return v==null?null:v.setScale(2).toPlainString(); }
+    private static String coordinate(ResultSet rs,String key) throws SQLException { BigDecimal v=rs.getBigDecimal(key); return v==null?null:v.stripTrailingZeros().toPlainString(); }
     private static Integer intOrNull(ResultSet rs,String key) throws SQLException { int v=rs.getInt(key); return rs.wasNull()?null:v; }
     private Object[] values(LedgerRequest r, BigDecimal power) {
-        return new Object[]{r.ledgerCode().trim(),r.originalAddress().trim(),r.destinationAddress().trim(),r.applicationMethod(),r.applicantContact().trim(),blank(r.applicantPhone()),r.deviceCondition(),r.direction(),r.applicationDate(),blank(r.accessRoom()),blank(r.fiberCore()),blank(r.networkStandard()),blank(r.bbuModel()),blank(r.rruModel()),power,blank(r.managementIp()),r.managementVlan(),blank(r.businessIp()),r.businessVlan(),blank(r.deviceSerialNo()),blank(r.assetOwner()),blank(r.remarks())};
+        return new Object[]{r.ledgerCode().trim(),r.originalAddress().trim(),r.destinationAddress().trim(),r.applicationMethod(),r.applicantContact().trim(),blank(r.applicantPhone()),r.deviceCondition(),blank(r.deviceConditionDetail()),r.direction(),r.applicationDate(),blank(r.ptnPort()),blank(r.accessRoom()),blank(r.fiberCore()),blank(r.networkStandard()),blank(r.bbuModel()),blank(r.rruModel()),power,blank(r.managementIp()),r.managementVlan(),blank(r.businessIp()),r.businessVlan(),blank(r.deviceSerialNo()),blank(r.assetOwner()),blank(r.remarks()),coordinateValue(r.latitude()),coordinateValue(r.longitude())};
     }
+    private static BigDecimal coordinateValue(String value) { return value==null||value.isBlank()?null:new BigDecimal(value.trim()); }
     private static String blank(String s) { return s==null||s.isBlank()?null:s.trim(); }
     public long insert(long organizationId, LedgerRequest r, BigDecimal power) {
         Object[] fields=values(r,power);
@@ -84,6 +86,12 @@ public class LedgerRepository {
         List<LedgerRecord> records=jdbc.query("SELECT "+FIELDS+" FROM emergency_device_ledger"+where+" ORDER BY id DESC LIMIT ? OFFSET ?",MAPPER,paged.toArray());
         return new Page(records,total,page,pageSize);
     }
+    public MapPoints mapPoints() {
+        List<MapPoint> records=jdbc.query("SELECT id,ledger_code,destination_address,device_condition,latitude,longitude FROM emergency_device_ledger WHERE deleted=FALSE AND latitude IS NOT NULL ORDER BY id DESC",
+            (rs,row) -> new MapPoint(Long.toString(rs.getLong("id")),rs.getString("ledger_code"),rs.getString("destination_address"),rs.getString("device_condition"),coordinate(rs,"latitude"),coordinate(rs,"longitude")));
+        long unlocated=jdbc.queryForObject("SELECT COUNT(*) FROM emergency_device_ledger WHERE deleted=FALSE AND latitude IS NULL",Long.class);
+        return new MapPoints(records,unlocated);
+    }
     public void audit(long org,long ledger,long actor,String action,String oldValue,String newValue) {
         jdbc.update("INSERT INTO ledger_audit(organization_id,ledger_id,actor_user_id,action,old_value,new_value,trace_id) VALUES (?,?,?,?,?,?,?)",org,ledger,actor,action,oldValue,newValue,Trace.id());
     }
@@ -95,6 +103,8 @@ public class LedgerRepository {
         return count!=null&&count>0;
     }
     public record Page(List<LedgerRecord> records,long total,int page,int pageSize) {}
+    public record MapPoint(String id,String ledgerCode,String destinationAddress,String deviceCondition,String latitude,String longitude) {}
+    public record MapPoints(List<MapPoint> records,long unlocatedCount) {}
     public record HistoryEntry(String id,String ledgerId,String action,String actorName,JsonNode before,JsonNode after,OffsetDateTime occurredAt) {}
     public record HistoryPage(List<HistoryEntry> records,long total,int page,int pageSize) {}
 }
