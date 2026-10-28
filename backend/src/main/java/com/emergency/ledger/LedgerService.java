@@ -53,13 +53,35 @@ public class LedgerService {
         repository.lockSharedWorkspace(user.organizationId());
         LedgerRecord old=get(user,id);
         if(!old.ledgerCode().equals(request.ledgerCode().trim())&&repository.codeExists(request.ledgerCode().trim(),id)) throw duplicateCode();
+        return updateLocked(user,old,request,power,parseVersion(request.version()));
+    }
+    @Transactional
+    public ImportOutcome importUpsert(CurrentUser user,LedgerRequest request) {
+        canEdit(user);
+        BigDecimal power=validate(request,false);
+        repository.lockSharedWorkspace(user.organizationId());
+        LedgerRepository.CodeMatch match=repository.codeMatch(user.organizationId(),request.ledgerCode().trim());
+        if(match==null) {
+            long id=repository.insert(user.organizationId(),request,power);
+            LedgerRecord created=get(user,id);
+            repository.audit(user.organizationId(),id,user.id(),"CREATE",null,serialize(created));
+            return ImportOutcome.CREATED;
+        }
+        if(match.deleted()) throw duplicateCode();
+        LedgerRecord old=get(user,match.id());
+        updateLocked(user,old,request,power,Long.parseLong(old.version()));
+        return ImportOutcome.UPDATED;
+    }
+    private LedgerRecord updateLocked(CurrentUser user,LedgerRecord old,LedgerRequest request,BigDecimal power,long version) {
+        long id=Long.parseLong(old.id());
         long recordOrg=Long.parseLong(old.organizationId());
-        int rows=repository.update(recordOrg,id,parseVersion(request.version()),request,power);
+        int rows=repository.update(recordOrg,id,version,request,power);
         if(rows!=1) throw new ApiException(HttpStatus.CONFLICT,"VERSION_CONFLICT","台账已被修改，请刷新后重试");
         LedgerRecord result=get(user,id);
         repository.audit(recordOrg,id,user.id(),"UPDATE",serialize(old),serialize(result));
         return result;
     }
+    public enum ImportOutcome { CREATED, UPDATED }
     @Transactional
     public void delete(CurrentUser user,long id) {
         if(!"ADMIN".equals(user.role())) throw new ApiException(HttpStatus.FORBIDDEN,"FORBIDDEN","仅管理员可删除台账");

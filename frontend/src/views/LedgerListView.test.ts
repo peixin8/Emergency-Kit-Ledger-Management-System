@@ -80,25 +80,30 @@ beforeEach(() => {
   importLedgers.mockReset()
 })
 
-it('导入已有台账文件成功后刷新列表和地图，展示新增的台账', async () => {
+it('导入同时新增和覆盖台账时分别提示数量，并刷新列表和地图', async () => {
   const imported = { ...ledger, id: '2', ledgerCode: 'XM-002', direction: 'UNSPECIFIED' as const }
   listLedgers.mockResolvedValueOnce({ records: [ledger], total: 1, page: 1, pageSize: 20 })
     .mockResolvedValue({ records: [imported, ledger], total: 2, page: 1, pageSize: 20 })
-  importLedgers.mockResolvedValue({ importedCount: 1 })
-  const wrapper = mountLedgerList()
-  await flushPromises()
-  expect(wrapper.text()).toContain('可导入现有台账')
-  const fileInput = wrapper.find<HTMLInputElement>('input[type="file"]')
-  const file = new File(['fake xlsx bytes'], '现有台账.xlsx')
-  Object.defineProperty(fileInput.element, 'files', { configurable: true, value: [file] })
-  await fileInput.trigger('change')
-  await flushPromises()
-  expect(importLedgers).toHaveBeenCalledWith(file)
-  expect(listLedgers).toHaveBeenCalledTimes(2)
-  expect(listLedgerMapPoints).toHaveBeenCalledTimes(2)
-  expect(wrapper.find('.test-table').text()).toContain('XM-002')
-  expect(wrapper.find('.test-table').text()).toContain('未填写')
-  wrapper.unmount()
+  importLedgers.mockResolvedValue({ importedCount: 2, createdCount: 1, updatedCount: 1 })
+  const success = vi.spyOn(ElMessage, 'success').mockImplementation(() => ({ close: () => {} }) as ReturnType<typeof ElMessage.success>)
+  try {
+    const wrapper = mountLedgerList()
+    await flushPromises()
+    expect(wrapper.text()).toContain('可导入现有台账')
+    const fileInput = wrapper.find<HTMLInputElement>('input[type="file"]')
+    const file = new File(['fake xlsx bytes'], '现有台账.xlsx')
+    Object.defineProperty(fileInput.element, 'files', { configurable: true, value: [file] })
+    await fileInput.trigger('change')
+    await flushPromises()
+    expect(importLedgers).toHaveBeenCalledWith(file)
+    expect(success).toHaveBeenCalledWith(expect.stringContaining('新增 1 条'))
+    expect(success).toHaveBeenCalledWith(expect.stringContaining('覆盖 1 条'))
+    expect(listLedgers).toHaveBeenCalledTimes(2)
+    expect(listLedgerMapPoints).toHaveBeenCalledTimes(2)
+    expect(wrapper.find('.test-table').text()).toContain('XM-002')
+    expect(wrapper.find('.test-table').text()).toContain('未填写')
+    wrapper.unmount()
+  } finally { success.mockRestore() }
 })
 
 it('导入校验失败时显示后台给出的行号和列名，不刷新列表', async () => {

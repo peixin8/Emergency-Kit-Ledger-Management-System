@@ -31,10 +31,9 @@ public class LedgerController {
             .body(excel.export(identity.current(),keyword,status,direction));
     }
     @PostMapping(value="/import",consumes=MediaType.MULTIPART_FORM_DATA_VALUE)
-    public ApiResponse<ImportResult> importFile(@RequestPart("file") MultipartFile file) {
-        return ApiResponse.ok(new ImportResult(excel.importFile(identity.current(),file)));
+    public ApiResponse<LedgerExcelService.ImportCounts> importFile(@RequestPart("file") MultipartFile file) {
+        return ApiResponse.ok(excel.importFile(identity.current(),file));
     }
-    public record ImportResult(int importedCount) {}
     @PostMapping public ResponseEntity<ApiResponse<LedgerRecord>> create(@Valid @RequestBody LedgerRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.ok(service.create(identity.current(),request)));
     }

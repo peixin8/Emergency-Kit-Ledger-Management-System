@@ -72,7 +72,7 @@ public class LedgerExcelService {
     }
 
     @Transactional
-    public int importFile(CurrentUser user,MultipartFile file) {
+    public ImportCounts importFile(CurrentUser user,MultipartFile file) {
         if(file==null||file.isEmpty()) throw bad("Excel 文件不能为空");
         if(file.getSize()>MAX_BYTES) throw new ApiException(HttpStatus.PAYLOAD_TOO_LARGE,"FILE_TOO_LARGE","Excel 文件不能超过 2 MB");
         if(file.getOriginalFilename()==null||!file.getOriginalFilename().toLowerCase().endsWith(".xlsx")) throw bad("仅支持 .xlsx 文件");
@@ -84,7 +84,9 @@ public class LedgerExcelService {
             DataFormatter formatter=new DataFormatter();
             Map<String,Integer> columns=columns(header,formatter);
             if(sheet.getLastRowNum()>MAX_IMPORT_ROWS) throw bad("Excel 不能超过 1000 行数据");
-            int imported=0;
+            int created=0;
+            int updated=0;
+            Set<String> seenCodes=new HashSet<>();
             for(int index=1;index<=sheet.getLastRowNum();index++) {
                 Row row=sheet.getRow(index);
                 int line=index+1;
@@ -97,16 +99,20 @@ public class LedgerExcelService {
                     throw bad("第 "+line+" 行："+detail);
                 }
                 validateImportedFields(request,line);
-                try { ledgers.create(user,request); }
+                if(!seenCodes.add(request.ledgerCode().trim())) throw duplicateInFile(line);
+                try {
+                    LedgerService.ImportOutcome outcome=ledgers.importUpsert(user,request);
+                    if(outcome==LedgerService.ImportOutcome.CREATED) created++;
+                    else updated++;
+                }
                 catch(DuplicateKeyException e) { throw duplicate(line); }
                 catch(ApiException e) {
                     if("DUPLICATE_LEDGER_CODE".equals(e.code())) throw duplicate(line);
                     throw new ApiException(e.status(),e.code(),"第 "+line+" 行："+e.getMessage());
                 }
-                imported++;
             }
-            if(imported==0) throw bad("Excel 没有可导入的数据");
-            return imported;
+            if(created+updated==0) throw bad("Excel 没有可导入的数据");
+            return new ImportCounts(created+updated,created,updated);
         } catch(ApiException e) { throw e; }
         catch(Exception e) { throw bad("Excel 文件格式无效或无法读取"); }
     }
@@ -237,7 +243,9 @@ public class LedgerExcelService {
         try { validation.run(); }
         catch(ApiException e) { throw new ApiException(e.status(),e.code(),"第 "+line+" 行「"+field+"」："+e.getMessage()); }
     }
-    private static ApiException duplicate(int line) { return new ApiException(HttpStatus.CONFLICT,"DUPLICATE_LEDGER_CODE","第 "+line+" 行「台账编号」：编号已存在或在文件中重复"); }
+    private static ApiException duplicate(int line) { return new ApiException(HttpStatus.CONFLICT,"DUPLICATE_LEDGER_CODE","第 "+line+" 行「台账编号」：编号属于已删除的台账，无法覆盖"); }
+    private static ApiException duplicateInFile(int line) { return new ApiException(HttpStatus.CONFLICT,"DUPLICATE_LEDGER_CODE","第 "+line+" 行「台账编号」：文件内编号重复"); }
+    public record ImportCounts(int importedCount,int createdCount,int updatedCount) {}
     private static String number(Integer value) { return value==null?"":value.toString(); }
     private static ApiException bad(String message) { return new ApiException(HttpStatus.BAD_REQUEST,"VALIDATION_ERROR",message); }
 }
