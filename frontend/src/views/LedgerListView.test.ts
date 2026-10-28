@@ -343,7 +343,7 @@ it('首页列表和导出仅传入保留的检索条件', async () => {
 it('厦门地图逐台展示已定位设备入口与未定位数量，点击点位列表打开完整台账', async () => {
   const wrapper = mountLedgerList()
   await flushPromises()
-  expect(wrapper.text()).toContain('厦门设备地图')
+  expect(wrapper.text()).toContain('福建省·厦门市设备地图')
   expect(wrapper.text()).toContain('待定位 2 条台账')
   await wrapper.findAll('button').find(button => button.text() === '展开地图')!.trigger('click')
   const point = wrapper.find('button.map-point-link')
@@ -351,6 +351,26 @@ it('厦门地图逐台展示已定位设备入口与未定位数量，点击点�
   await point.trigger('click')
   await flushPromises()
   expect(wrapper.find('.test-drawer').text()).toContain('完整详情')
+  wrapper.unmount()
+})
+
+it('地图旁侧保留外市记录和已定位总数，并明确标注显示范围且仍可打开', async () => {
+  const outside = { ...ledger, id: '2', ledgerCode: 'FZ-001', destinationAddress: '福州市', latitude: '26.0745000', longitude: '119.2965000' }
+  listLedgerMapPoints.mockResolvedValue({ records: [ledger, outside], unlocatedCount: 2 })
+  getLedger.mockResolvedValue(outside)
+  const wrapper = mountLedgerList()
+  await flushPromises()
+  expect(wrapper.text()).toContain('已定位 2 条台账')
+  expect(wrapper.find('section.location-panel').attributes('aria-label')).toBe('福建省·厦门市设备地图')
+  await wrapper.findAll('button').find(button => button.text() === '展开地图')!.trigger('click')
+  const points = wrapper.findAll('button.map-point-link')
+  expect(points).toHaveLength(2)
+  expect(points[0]!.text()).not.toContain('超出厦门显示范围')
+  expect(points[1]!.text()).toContain('超出厦门显示范围')
+  await points[1]!.trigger('click')
+  await flushPromises()
+  expect(getLedger).toHaveBeenLastCalledWith('2')
+  expect(wrapper.find('.test-drawer').text()).toContain('福州市')
   wrapper.unmount()
 })
 

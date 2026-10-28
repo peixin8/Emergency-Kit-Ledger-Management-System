@@ -5,6 +5,7 @@ import { conditionLabels } from '../types/ledger'
 import type { LedgerFilters, LedgerMapPoints } from '../types/ledger'
 import type { Coordinates } from '../types/location'
 import MapCanvas from './MapCanvas.vue'
+import { containsCoordinate, xiamenRegion } from '../maps/region'
 
 const emit = defineEmits<{ open: [id: string]; unlocated: []; refresh: [] }>()
 const props = defineProps<{ selected?: Coordinates | null }>()
@@ -35,9 +36,9 @@ defineExpose({ reload })
 </script>
 
 <template>
-  <section class="location-panel" aria-label="厦门设备地图">
+  <section class="location-panel" aria-label="福建省·厦门市设备地图">
     <div class="location-heading">
-      <div><h2>厦门设备地图</h2><p>每个圆点对应一条已选定目标地址坐标的台账。点击圆点或旁边的记录查看完整信息。</p></div>
+      <div><h2>福建省·厦门市设备地图</h2><p>地图仅显示厦门市范围内点位；全部已定位台账仍保留在旁侧记录中，点击查看完整信息。</p></div>
       <div class="location-counts"><span>已定位 {{ points.records.length }} 条台账</span><button type="button" @click="emit('unlocated')">待定位 {{ points.unlocatedCount }} 条台账</button><button type="button" :disabled="loading" @click="emit('refresh')">刷新点位</button><button type="button" :aria-expanded="expanded" @click="expanded = !expanded">{{ expanded ? '收起地图' : '展开地图' }}</button></div>
     </div>
     <div v-if="error" class="list-error" role="alert">{{ error }} <button type="button" @click="emit('refresh')">重试</button></div>
@@ -49,7 +50,7 @@ defineExpose({ reload })
         <ul v-else>
           <li v-for="point in points.records" :key="point.id">
             <button type="button" class="map-point-link" @click="emit('open', point.id)">
-              <strong>{{ point.ledgerCode }}</strong><span>{{ point.destinationAddress }}</span><small>{{ conditionLabels[point.deviceCondition] }} · ID {{ point.id }}</small>
+              <strong>{{ point.ledgerCode }}</strong><span>{{ point.destinationAddress }}</span><small>{{ conditionLabels[point.deviceCondition] }} · ID {{ point.id }}<template v-if="!containsCoordinate(xiamenRegion, Number(point.latitude), Number(point.longitude))"> · 超出厦门显示范围</template></small>
             </button>
           </li>
         </ul>
