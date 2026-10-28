@@ -127,7 +127,7 @@ defineExpose({ submit, isDirty })
       <el-form-item label="联系电话" prop="applicantPhone"><el-input v-model.trim="form.applicantPhone" placeholder="选填" maxlength="40" /></el-form-item>
     </div>
     <div class="form-section-title"><span>02</span> 目标地址点位</div>
-    <p class="form-location-hint">输入目标地址后点击搜索，选择候选位置并在地图核对；也可在厦门地图上点击实际位置或手动填写 WGS84 经纬度。未选点的台账会显示为待定位。</p>
+    <p class="form-location-hint">输入目标地址后点击搜索并选择候选位置；地图仅显示福建省·厦门市，可在市域内点击实际位置，也可手动填写 WGS84 经纬度。市域外坐标仍可保存，但不在地图显示；未选点的台账显示为待定位。</p>
     <div class="address-search-actions"><button type="button" class="address-search-button" :disabled="submitting || searchingAddress" @click="findAddress">{{ searchingAddress ? '搜索中…' : '搜索地址' }}</button><span>仅点击按钮时，将目标地址发送至高德地图服务查询。</span></div>
     <p v-if="searchMessage" class="address-search-message" role="status">{{ searchMessage }}</p>
     <ul v-if="candidates.length" class="address-candidates" aria-label="地址搜索候选位置"><li v-for="(candidate, index) in candidates" :key="`${candidate.latitude}-${candidate.longitude}-${index}`"><button type="button" class="address-candidate" :disabled="submitting" @click="selectCandidate(candidate)"><strong>{{ candidate.displayName }}</strong><small>{{ candidate.latitude }}, {{ candidate.longitude }}</small></button></li></ul>
