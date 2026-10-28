@@ -10,7 +10,7 @@ vi.mock('../api/ledger', () => ({ listLedgerHistory: (...args: unknown[]) => lis
 const ledger: Ledger = {
   id: '42', organizationId: '1', version: '1', ledgerCode: 'XM-001', originalAddress: '厦门市思明区',
   destinationAddress: '厦门市湖里区', direction: 'IN', applicationMethod: 'ONLINE', applicantContact: '张三',
-  applicantPhone: '13800000000', applicationDate: '2026-10-27', deviceCondition: 'GOOD', accessRoom: '机房 A',
+  applicantPhone: '13800000000', applicationDate: '2026-10-27', deviceCondition: 'GOOD', deviceConditionDetail: null, accessRoom: '机房 A', ptnPort: null,
   fiberCore: '1', networkStandard: '5G', bbuModel: 'BBU-A', rruModel: 'RRU-A', bbuRruPowerWatts: '100',
   managementIp: '10.0.0.1', managementVlan: 101, businessIp: '10.1.0.1', businessVlan: 201,
   deviceSerialNo: 'SN-001', assetOwner: '厦门', remarks: '创建时备注', createdAt: '2026-10-27T08:00:00Z',

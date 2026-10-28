@@ -10,6 +10,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 @RestControllerAdvice
 public class ApiErrors {
@@ -24,6 +25,10 @@ public class ApiErrors {
     ResponseEntity<ApiResponse<Void>> badRequest(Exception e) { return ResponseEntity.badRequest().body(ApiResponse.error("VALIDATION_ERROR", "请求格式或字段值无效")); }
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)
     ResponseEntity<ApiResponse<Void>> badParameter(MethodArgumentTypeMismatchException e) { return ResponseEntity.badRequest().body(ApiResponse.error("VALIDATION_ERROR", "路径或查询参数格式无效")); }
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    ResponseEntity<ApiResponse<Void>> fileTooLarge(MaxUploadSizeExceededException e) {
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).body(ApiResponse.error("FILE_TOO_LARGE", "Excel 文件不能超过 2 MB"));
+    }
     @ExceptionHandler(DuplicateKeyException.class)
     ResponseEntity<ApiResponse<Void>> duplicate(DuplicateKeyException e) {
         String detail = e.getMostSpecificCause().getMessage();

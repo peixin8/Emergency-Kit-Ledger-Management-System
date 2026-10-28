@@ -47,7 +47,7 @@ class LedgerApiTest {
         mvc.perform(post("/api/v1/ledgers").header("Authorization","Bearer "+token).contentType(MediaType.APPLICATION_JSON)
             .content(body(code,"A机房","B机房","0"))).andExpect(status().isConflict());
         mvc.perform(post("/api/v1/ledgers").header("Authorization","Bearer "+token).contentType(MediaType.APPLICATION_JSON)
-            .content(body("BAD-"+System.nanoTime(),"A机房","A机房","0"))).andExpect(status().isBadRequest());
+            .content(body("SAME-"+System.nanoTime(),"A机房","A机房","0"))).andExpect(status().isCreated());
         mvc.perform(put("/api/v1/ledgers/{id}",id).header("Authorization","Bearer "+token).contentType(MediaType.APPLICATION_JSON)
             .content(body(code,"A机房","C机房","0"))).andExpect(status().isOk()).andExpect(jsonPath("$.data.version").value("1"));
         mvc.perform(put("/api/v1/ledgers/{id}",id).header("Authorization","Bearer "+token).contentType(MediaType.APPLICATION_JSON)

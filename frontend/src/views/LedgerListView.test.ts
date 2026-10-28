@@ -4,26 +4,29 @@ import { defineComponent, h, inject, provide, ref, toRef } from 'vue'
 import type { Ref } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, expect, it, vi } from 'vitest'
+import { ElMessage } from 'element-plus'
 import LedgerListView from './LedgerListView.vue'
 import type { Ledger } from '../types/ledger'
 import MapCanvas from '../components/MapCanvas.vue'
+import { ApiError } from '../api/http'
 
 const listLedgers = vi.fn()
 const getLedger = vi.fn()
 const listLedgerMapPoints = vi.fn()
+const importLedgers = vi.fn()
 vi.mock('../api/ledger', () => ({
   listLedgers: (...args: unknown[]) => listLedgers(...args),
   getLedger: (...args: unknown[]) => getLedger(...args),
   listLedgerMapPoints: (...args: unknown[]) => listLedgerMapPoints(...args),
   createLedger: vi.fn(), updateLedger: vi.fn(), deleteLedger: vi.fn(),
-  importLedgers: vi.fn(), exportLedgers: vi.fn()
+  importLedgers: (...args: unknown[]) => importLedgers(...args), exportLedgers: vi.fn()
 }))
 
 const ledger: Ledger = {
   id: '9007199254740993', organizationId: '1', version: '1', ledgerCode: 'XM-001',
   originalAddress: '厦门市思明区', destinationAddress: '厦门市湖里区', direction: 'IN',
   applicationMethod: 'ONLINE', applicantContact: '张三', applicantPhone: '13800000000',
-  applicationDate: '2026-10-27', deviceCondition: 'GOOD', accessRoom: '机房 A',
+  applicationDate: '2026-10-27', deviceCondition: 'GOOD', deviceConditionDetail: null, accessRoom: '机房 A', ptnPort: null,
   fiberCore: '1', networkStandard: '5G', bbuModel: 'BBU-A', rruModel: 'RRU-A',
   bbuRruPowerWatts: '100', managementIp: '10.0.0.1', managementVlan: 101,
   businessIp: '10.1.0.1', businessVlan: 201, deviceSerialNo: 'SN-001',
@@ -74,6 +77,46 @@ beforeEach(() => {
     records: [{ id: ledger.id, ledgerCode: ledger.ledgerCode, destinationAddress: ledger.destinationAddress, deviceCondition: ledger.deviceCondition, latitude: '24.4798345', longitude: '118.0894251' }],
     unlocatedCount: 2
   })
+  importLedgers.mockReset()
+})
+
+it('导入已有台账文件成功后刷新列表和地图，展示新增的台账', async () => {
+  const imported = { ...ledger, id: '2', ledgerCode: 'XM-002', direction: 'UNSPECIFIED' as const }
+  listLedgers.mockResolvedValueOnce({ records: [ledger], total: 1, page: 1, pageSize: 20 })
+    .mockResolvedValue({ records: [imported, ledger], total: 2, page: 1, pageSize: 20 })
+  importLedgers.mockResolvedValue({ importedCount: 1 })
+  const wrapper = mountLedgerList()
+  await flushPromises()
+  expect(wrapper.text()).toContain('可导入现有台账')
+  const fileInput = wrapper.find<HTMLInputElement>('input[type="file"]')
+  const file = new File(['fake xlsx bytes'], '现有台账.xlsx')
+  Object.defineProperty(fileInput.element, 'files', { configurable: true, value: [file] })
+  await fileInput.trigger('change')
+  await flushPromises()
+  expect(importLedgers).toHaveBeenCalledWith(file)
+  expect(listLedgers).toHaveBeenCalledTimes(2)
+  expect(listLedgerMapPoints).toHaveBeenCalledTimes(2)
+  expect(wrapper.find('.test-table').text()).toContain('XM-002')
+  expect(wrapper.find('.test-table').text()).toContain('未填写')
+  wrapper.unmount()
+})
+
+it('导入校验失败时显示后台给出的行号和列名，不刷新列表', async () => {
+  const message = '第 4 行「BBU-RRU功耗」：单位不受支持'
+  importLedgers.mockRejectedValue(new ApiError(400, 'VALIDATION_ERROR', message))
+  const error = vi.spyOn(ElMessage, 'error').mockImplementation(() => ({ close: () => {} }) as ReturnType<typeof ElMessage.error>)
+  try {
+    const wrapper = mountLedgerList()
+    await flushPromises()
+    const fileInput = wrapper.find<HTMLInputElement>('input[type="file"]')
+    Object.defineProperty(fileInput.element, 'files', { configurable: true, value: [new File(['fake'], '现有台账.xlsx')] })
+    await fileInput.trigger('change')
+    await flushPromises()
+    expect(error).toHaveBeenCalledWith(expect.objectContaining({ message }))
+    expect(listLedgers).toHaveBeenCalledTimes(1)
+    expect(listLedgerMapPoints).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  } finally { error.mockRestore() }
 })
 
 it('主表仅显示摘要，点击台账编号后显示完整详情与后续操作', async () => {

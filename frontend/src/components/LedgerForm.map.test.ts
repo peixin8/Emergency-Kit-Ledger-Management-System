@@ -39,3 +39,16 @@ it('地图点选目标地址坐标后以七位小数字符串提交，并提示�
   expect(wrapper.emitted('save')?.[0]?.[0]).toMatchObject({ latitude: '24.4798345', longitude: '118.0894251' })
   wrapper.unmount()
 })
+
+it('编辑时保留 PTN 端口和设备故障说明，并允许原始与目标地址相同', async () => {
+  const model = { ...emptyLedger(), id: '43', organizationId: '1', version: '1', createdAt: '', updatedAt: '', originalAddress: '厦门市思明区', destinationAddress: '厦门市思明区', ptnPort: '网元 A+槽口 2', deviceConditionDetail: '开关电源故障' }
+  const wrapper = mount(LedgerForm, { props: { modelValue: model }, global: { stubs: {
+    'el-form': Form, 'el-form-item': FormItem, 'el-input': Input,
+    'el-select': true, 'el-option': true, 'el-date-picker': true, 'el-input-number': true, MapCanvas: true
+  } } })
+  expect(wrapper.text()).toContain('PTN 端口（网元+槽口）')
+  expect(wrapper.text()).toContain('设备状况说明')
+  await wrapper.vm.submit()
+  expect(wrapper.emitted('save')?.[0]?.[0]).toMatchObject({ ptnPort: '网元 A+槽口 2', deviceConditionDetail: '开关电源故障', originalAddress: '厦门市思明区', destinationAddress: '厦门市思明区' })
+  wrapper.unmount()
+})

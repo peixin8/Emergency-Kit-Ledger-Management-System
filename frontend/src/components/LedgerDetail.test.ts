@@ -9,7 +9,7 @@ const ledger: Ledger = {
   id: '1', organizationId: '1', version: '1', ledgerCode: 'dsfg',
   originalAddress: '原址', destinationAddress: '厦门市思明区软件园二期 A 座', direction: 'IN',
   applicationMethod: 'ONLINE', applicantContact: '张三', applicantPhone: '13800000000',
-  applicationDate: '2026-10-28', deviceCondition: 'GOOD', accessRoom: '机房 A',
+  applicationDate: '2026-10-28', deviceCondition: 'GOOD', deviceConditionDetail: null, accessRoom: '机房 A', ptnPort: null,
   fiberCore: '1', networkStandard: '5G', bbuModel: 'BBU-A', rruModel: 'RRU-A',
   bbuRruPowerWatts: '100', managementIp: '10.0.0.1', managementVlan: 101,
   businessIp: '10.1.0.1', businessVlan: 201, deviceSerialNo: 'SN-001',
@@ -50,5 +50,16 @@ it('历史快照默认不创建地图和导航入口', () => {
   const wrapper = mount(LedgerDetail, { props: { ledger }, global: { stubs: { MapCanvas: true, 'el-tag': true } } })
   expect(wrapper.findComponent(MapCanvas).exists()).toBe(false)
   expect(wrapper.find('a[href^="https://uri.amap.com/navigation"]').exists()).toBe(false)
+  wrapper.unmount()
+})
+
+it('详情展示导入来源的 PTN 端口、设备状况说明及未填写方向', () => {
+  const record: Ledger = { ...ledger, direction: 'UNSPECIFIED', ptnPort: '网元 A+槽口 2', deviceConditionDetail: '开关电源故障' }
+  const wrapper = mount(LedgerDetail, { props: { ledger: record }, global: { stubs: { MapCanvas: true, 'el-tag': true } } })
+  expect(wrapper.text()).toContain('未填写')
+  expect(wrapper.text()).toContain('PTN 端口（网元+槽口）')
+  expect(wrapper.text()).toContain('网元 A+槽口 2')
+  expect(wrapper.text()).toContain('设备状况说明')
+  expect(wrapper.text()).toContain('开关电源故障')
   wrapper.unmount()
 })

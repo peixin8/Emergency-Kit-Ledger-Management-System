@@ -73,7 +73,7 @@ function selectCandidate(candidate: AddressCandidate) {
 const rules: FormRules<LedgerInput> = {
   ledgerCode: [{ required: true, message: '请输入台账编号', trigger: 'blur' }],
   originalAddress: [{ required: true, message: '请输入原始地址', trigger: 'blur' }],
-  destinationAddress: [{ required: true, message: '请输入目标地址', trigger: 'blur' }, { validator: (_rule, value, callback) => value && !addressesDiffer(form.originalAddress, value) ? callback(new Error('目标地址不能与原始地址相同')) : callback(), trigger: 'blur' }],
+  destinationAddress: [{ required: true, message: '请输入目标地址', trigger: 'blur' }],
   applicationMethod: [{ required: true, message: '请选择申请方式', trigger: 'change' }],
   applicantContact: [{ required: true, message: '请输入申请联系人', trigger: 'blur' }],
   applicationDate: [{ required: true, message: '请选择申请日期', trigger: 'change' }],
@@ -90,6 +90,8 @@ async function submit() {
   if (!valid) return
   const input = { ...form }
   if (input.bbuRruPowerWatts === '') input.bbuRruPowerWatts = null
+  input.ptnPort = input.ptnPort?.trim() || null
+  input.deviceConditionDetail = input.deviceConditionDetail?.trim() || null
   input.latitude = normalizeCoordinate(input.latitude)
   input.longitude = normalizeCoordinate(input.longitude)
   if (!validCoordinates(input.latitude, input.longitude)) return
@@ -125,8 +127,10 @@ defineExpose({ submit })
     <div class="form-section-title"><span>03</span> 设备与传输信息</div>
     <div class="form-grid">
       <el-form-item label="应急宝设备状况" prop="deviceCondition"><el-select v-model="form.deviceCondition" style="width:100%"><el-option v-for="(label, value) in conditionLabels" :key="value" :label="label" :value="value" /></el-select></el-form-item>
+      <el-form-item label="设备状况说明" prop="deviceConditionDetail"><el-input v-model.trim="form.deviceConditionDetail" placeholder="故障或维修情况，选填" maxlength="255" /></el-form-item>
       <el-form-item label="设备序列号" prop="deviceSerialNo"><el-input v-model.trim="form.deviceSerialNo" placeholder="选填" maxlength="120" /></el-form-item>
       <el-form-item label="接入机房" prop="accessRoom"><el-input v-model.trim="form.accessRoom" placeholder="机房名称或位置" maxlength="120" /></el-form-item>
+      <el-form-item label="PTN 端口（网元+槽口）" prop="ptnPort"><el-input v-model.trim="form.ptnPort" placeholder="网元和槽口，选填" maxlength="255" /></el-form-item>
       <el-form-item label="纤芯" prop="fiberCore"><el-input v-model.trim="form.fiberCore" placeholder="纤芯编号或描述" maxlength="100" /></el-form-item>
       <el-form-item label="制式" prop="networkStandard"><el-input v-model.trim="form.networkStandard" placeholder="如 4G / 5G" maxlength="100" /></el-form-item>
       <el-form-item label="资产归属" prop="assetOwner"><el-input v-model.trim="form.assetOwner" placeholder="所属单位或责任方" maxlength="120" /></el-form-item>

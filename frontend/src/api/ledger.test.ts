@@ -20,6 +20,12 @@ describe('台账请求', () => {
     expect(url).toContain('/ledgers/9007199254740993')
     expect(JSON.parse(String(options?.body)).version).toBe('9007199254740995')
   })
+  it('修改导入台账时传回 PTN、设备状况说明及未填写方向', async () => {
+    const fetcher = vi.spyOn(globalThis, 'fetch').mockResolvedValue(success({}))
+    await updateLedger('42', { ...emptyLedger(), direction: 'UNSPECIFIED', ptnPort: '网元 A+槽口 2', deviceConditionDetail: '开关电源故障', originalAddress: '同一地址', destinationAddress: '同一地址' }, '3')
+    const body = JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))
+    expect(body).toMatchObject({ direction: 'UNSPECIFIED', ptnPort: '网元 A+槽口 2', deviceConditionDetail: '开关电源故障', originalAddress: '同一地址', destinationAddress: '同一地址' })
+  })
   it('后端版本冲突以可识别错误返回', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ code: 'CONFLICT', message: '记录已更新', data: null }), { status: 409 }))
     await expect(updateLedger('1', emptyLedger(), '0')).rejects.toMatchObject({ status: 409, code: 'CONFLICT' } satisfies Partial<ApiError>)
