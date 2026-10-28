@@ -6,6 +6,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, expect, it, vi } from 'vitest'
 import LedgerListView from './LedgerListView.vue'
 import type { Ledger } from '../types/ledger'
+import MapCanvas from '../components/MapCanvas.vue'
 
 const listLedgers = vi.fn()
 const getLedger = vi.fn()
@@ -53,6 +54,19 @@ const Drawer = defineComponent({
   setup(props, { slots }) { return () => props.modelValue ? h('aside', { class: 'test-drawer' }, [h('h2', props.title), slots.default?.(), slots.footer?.()]) : null }
 })
 
+function mountLedgerList() {
+  return mount(LedgerListView, { global: {
+    directives: { loading: () => {} },
+    stubs: {
+      'el-table': Table, 'el-table-column': Column, 'el-drawer': Drawer,
+      'el-button': { emits: ['click'], template: '<button @click="$emit(\'click\')"><slot /></button>' },
+      'el-input': true, 'el-select': true, 'el-option': true, 'el-icon': true,
+      'el-pagination': true, LedgerForm: true, LedgerHistory: true, MapCanvas: true,
+      'el-tag': { template: '<span><slot /></span>' }
+    }
+  } })
+}
+
 beforeEach(() => {
   listLedgers.mockReset().mockResolvedValue({ records: [ledger], total: 1, page: 1, pageSize: 20 })
   getLedger.mockReset().mockResolvedValue(ledger)
@@ -63,17 +77,7 @@ beforeEach(() => {
 })
 
 it('主表仅显示摘要，点击台账编号后显示完整详情与后续操作', async () => {
-  const wrapper = mount(LedgerListView, { global: {
-    directives: { loading: () => {} },
-    stubs: {
-      'el-table': Table, 'el-table-column': Column, 'el-drawer': Drawer,
-      'el-button': { emits: ['click'], template: '<button @click="$emit(\'click\')"><slot /></button>' },
-      'el-input': true, 'el-select': true, 'el-option': true, 'el-icon': true,
-      'el-pagination': true, LedgerForm: true, LedgerHistory: true,
-      MapCanvas: true,
-      'el-tag': { template: '<span><slot /></span>' }
-    }
-  } })
+  const wrapper = mountLedgerList()
   await flushPromises()
 
   const table = wrapper.find('.test-table')
@@ -108,16 +112,7 @@ it('主表仅显示摘要，点击台账编号后显示完整详情与后续操�
 })
 
 it('厦门地图逐台展示已定位设备入口与未定位数量，点击点位列表打开完整台账', async () => {
-  const wrapper = mount(LedgerListView, { global: {
-    directives: { loading: () => {} },
-    stubs: {
-      'el-table': Table, 'el-table-column': Column, 'el-drawer': Drawer,
-      'el-button': { emits: ['click'], template: '<button @click="$emit(\'click\')"><slot /></button>' },
-      'el-input': true, 'el-select': true, 'el-option': true, 'el-icon': true,
-      'el-pagination': true, LedgerForm: true, LedgerHistory: true, MapCanvas: true,
-      'el-tag': { template: '<span><slot /></span>' }
-    }
-  } })
+  const wrapper = mountLedgerList()
   await flushPromises()
   expect(wrapper.text()).toContain('厦门设备地图')
   expect(wrapper.text()).toContain('待定位 2 台')
@@ -126,5 +121,65 @@ it('厦门地图逐台展示已定位设备入口与未定位数量，点击点�
   await point.trigger('click')
   await flushPromises()
   expect(wrapper.find('.test-drawer').text()).toContain('完整详情')
+  wrapper.unmount()
+})
+
+it('点击编号后首页地图聚焦完整记录坐标，切换到无坐标记录时清除焦点', async () => {
+  const unlocated = { ...ledger, id: '2', ledgerCode: 'XM-002', latitude: null, longitude: null }
+  listLedgers.mockResolvedValue({ records: [ledger, unlocated], total: 2, page: 1, pageSize: 20 })
+  getLedger.mockImplementation((id: string) => Promise.resolve(id === '2' ? unlocated : ledger))
+  const wrapper = mountLedgerList()
+  await flushPromises()
+  const codes = wrapper.findAll('button.record-link')
+  await codes[0]!.trigger('click')
+  await flushPromises()
+  expect(wrapper.findComponent(MapCanvas).props('selected')).toEqual({ latitude: ledger.latitude, longitude: ledger.longitude })
+  await codes[1]!.trigger('click')
+  await flushPromises()
+  expect(wrapper.findComponent(MapCanvas).props('selected')).toBeNull()
+  wrapper.unmount()
+})
+
+it('已定位详情切换到读取失败的记录时立即清除旧焦点，失败后不展示旧详情', async () => {
+  const second = { ...ledger, id: '2', ledgerCode: 'XM-002' }
+  listLedgers.mockResolvedValue({ records: [ledger, second], total: 2, page: 1, pageSize: 20 })
+  getLedger.mockImplementation((id: string) => id === '2' ? Promise.reject(new Error('读取失败')) : Promise.resolve(ledger))
+  const wrapper = mountLedgerList()
+  await flushPromises()
+  const codes = wrapper.findAll('button.record-link')
+  await codes[0]!.trigger('click')
+  await flushPromises()
+  expect(wrapper.findComponent(MapCanvas).props('selected')).toEqual({ latitude: ledger.latitude, longitude: ledger.longitude })
+
+  await codes[1]!.trigger('click')
+  expect(wrapper.findComponent(MapCanvas).props('selected')).toBeNull()
+  await flushPromises()
+  expect(wrapper.find('.test-drawer').exists()).toBe(false)
+  expect(wrapper.findComponent(MapCanvas).props('selected')).toBeNull()
+  wrapper.unmount()
+})
+
+it('快速切换台账时旧请求晚返回也不能覆盖新点位和新详情', async () => {
+  const second = { ...ledger, id: '2', ledgerCode: 'XM-002', destinationAddress: '厦门市集美区', latitude: '24.5750000', longitude: '118.1000000' }
+  listLedgers.mockResolvedValue({ records: [ledger, second], total: 2, page: 1, pageSize: 20 })
+  let resolveFirst: (value: Ledger) => void = () => { throw new Error('旧请求未初始化') }
+  const delayedFirst = new Promise<Ledger>(resolve => { resolveFirst = resolve })
+  getLedger.mockImplementation((id: string) => id === '2' ? Promise.resolve(second) : delayedFirst)
+  const wrapper = mountLedgerList()
+  await flushPromises()
+  const codes = wrapper.findAll('button.record-link')
+  await codes[0]!.trigger('click')
+  await flushPromises()
+  expect(wrapper.findComponent(MapCanvas).props('selected')).toBeNull()
+
+  await codes[1]!.trigger('click')
+  await flushPromises()
+  expect(wrapper.findComponent(MapCanvas).props('selected')).toEqual({ latitude: second.latitude, longitude: second.longitude })
+  expect(wrapper.find('.test-drawer').text()).toContain('XM-002')
+  resolveFirst(ledger)
+  await flushPromises()
+  expect(wrapper.findComponent(MapCanvas).props('selected')).toEqual({ latitude: second.latitude, longitude: second.longitude })
+  expect(wrapper.find('.test-drawer').text()).toContain('XM-002')
+  expect(wrapper.find('.test-drawer').text()).not.toContain('XM-001')
   wrapper.unmount()
 })

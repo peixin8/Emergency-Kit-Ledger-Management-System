@@ -11,6 +11,7 @@ import LedgerLocationMap from '../components/LedgerLocationMap.vue'
 import type { DeviceCondition, Direction, Ledger, LedgerInput, LedgerPage } from '../types/ledger'
 import { conditionLabels, directionLabels } from '../types/ledger'
 import { formatLedgerTimestamp } from '../types/date'
+import { ledgerCoordinates } from '../types/location'
 
 const loading = ref(false)
 const listError = ref('')
@@ -30,6 +31,7 @@ const importing = ref(false)
 const exporting = ref(false)
 const fileInput = ref<HTMLInputElement | null>(null)
 const drawerTitle = computed(() => drawerMode.value === 'create' ? '新增台账' : drawerMode.value === 'edit' ? '编辑台账' : '台账详情')
+const selectedCoordinates = computed(() => drawerMode.value === 'detail' ? ledgerCoordinates(current.value) : null)
 let activeRequest: AbortController | null = null
 let requestSequence = 0
 let detailSequence = 0
@@ -130,7 +132,7 @@ onMounted(load)
   <div class="workspace">
     <div class="page-heading"><div><div class="eyebrow">EQUIPMENT LEDGER <span class="eyebrow-line"></span> 共享工作台</div><h1>设备进出台账</h1><p>多人共用同一份台账，点击编号查看完整信息与历史记录。</p></div><el-button type="primary" size="large" class="primary-action" @click="openCreate"><el-icon><CirclePlus /></el-icon> 新增台账</el-button></div>
     <div class="overview-strip"><div><span class="overview-icon">▤</span><span><small>当前结果</small><strong>{{ pageData.total }} <em>条记录</em></strong></span></div><div class="overview-note"><span class="status-dot"></span> 数据实时写入共享数据库</div></div>
-    <LedgerLocationMap ref="locationMapRef" @open="id => openRecord(id, 'detail')" />
+    <LedgerLocationMap ref="locationMapRef" :selected="selectedCoordinates" @open="id => openRecord(id, 'detail')" />
     <section class="data-panel"><div class="panel-heading"><div><h2>台账记录</h2><p>按编号、位置及设备信息快速检索；点击编号查看详情</p></div><span class="panel-count">共 {{ pageData.total }} 条</span></div>
       <div class="filter-row"><el-input v-model="filter.keyword" class="search-input" clearable placeholder="搜索编号、地址或联系人" @keyup.enter="search" @clear="search"><template #prefix><el-icon><Search /></el-icon></template></el-input><el-select v-model="filter.direction" clearable placeholder="流转方向" @change="search"><el-option v-for="(label, value) in directionLabels" :key="value" :label="label" :value="value" /></el-select><el-select v-model="filter.status" clearable placeholder="设备状况" @change="search"><el-option v-for="(label, value) in conditionLabels" :key="value" :label="label" :value="value" /></el-select><el-button @click="reset"><el-icon><Refresh /></el-icon> 重置</el-button><el-button type="primary" plain @click="search"><el-icon><Search /></el-icon> 查询</el-button></div>
       <div class="file-row"><div class="file-actions"><el-button :loading="exporting" @click="downloadExcel"><el-icon><Download /></el-icon> 导出 Excel</el-button><el-button :loading="importing" @click="fileInput?.click()"><el-icon><Upload /></el-icon> 导入 Excel</el-button><input ref="fileInput" type="file" accept=".xlsx" class="visually-hidden" aria-label="选择 Excel 文件" @change="uploadExcel" /><span>可先导出作为模板；导入只新增未使用的台账编号。</span></div><div class="history-lookup"><el-input v-model="historyLookupId" placeholder="已删除台账的 ID" aria-label="历史台账 ID" @keyup.enter="lookupHistory" /><el-button @click="lookupHistory">查询历史</el-button></div></div>
@@ -144,7 +146,7 @@ onMounted(load)
       </el-table>
       <div class="table-footer"><span>显示第 {{ pageData.total ? (filter.page - 1) * filter.pageSize + 1 : 0 }}–{{ Math.min(filter.page * filter.pageSize, pageData.total) }} 条，共 {{ pageData.total }} 条</span><el-pagination v-model:current-page="filter.page" v-model:page-size="filter.pageSize" :total="pageData.total" :page-sizes="[10, 20, 50, 100]" layout="sizes, prev, pager, next" background @current-change="load" /></div>
     </section>
-    <el-drawer v-model="drawerVisible" :title="drawerTitle" size="min(760px, 96vw)" class="ledger-drawer" :close-on-click-modal="!submitting" :close-on-press-escape="!submitting" :before-close="(done: () => void) => { if (!submitting) done() }" @closed="detailSequence++"><div v-loading="drawerLoading" class="drawer-content"><LedgerDetail v-if="drawerMode === 'detail' && current" :ledger="current" /><LedgerForm v-else-if="drawerMode === 'create' || current" ref="formRef" :model-value="current" :submitting="submitting" @save="save" /></div><template #footer><div class="drawer-actions"><el-button :disabled="submitting" @click="drawerVisible = false">{{ drawerMode === 'detail' ? '关闭' : '取消' }}</el-button><el-button v-if="drawerMode !== 'detail'" type="primary" :loading="submitting" @click="formRef?.submit()">保存台账</el-button><template v-else-if="current"><el-button @click="openHistory(current.id)">历史记录</el-button><el-button type="danger" plain :icon="Delete" @click="remove(current)">删除台账</el-button><el-button type="primary" @click="openRecord(current.id, 'edit')">编辑记录</el-button></template></div></template></el-drawer>
+    <el-drawer v-model="drawerVisible" :title="drawerTitle" size="min(760px, 96vw)" class="ledger-drawer" :close-on-click-modal="!submitting" :close-on-press-escape="!submitting" :before-close="(done: () => void) => { if (!submitting) done() }" @closed="detailSequence++"><div v-loading="drawerLoading" class="drawer-content"><LedgerDetail v-if="drawerMode === 'detail' && current" :ledger="current" show-location /><LedgerForm v-else-if="drawerMode === 'create' || current" ref="formRef" :model-value="current" :submitting="submitting" @save="save" /></div><template #footer><div class="drawer-actions"><el-button :disabled="submitting" @click="drawerVisible = false">{{ drawerMode === 'detail' ? '关闭' : '取消' }}</el-button><el-button v-if="drawerMode !== 'detail'" type="primary" :loading="submitting" @click="formRef?.submit()">保存台账</el-button><template v-else-if="current"><el-button @click="openHistory(current.id)">历史记录</el-button><el-button type="danger" plain :icon="Delete" @click="remove(current)">删除台账</el-button><el-button type="primary" @click="openRecord(current.id, 'edit')">编辑记录</el-button></template></div></template></el-drawer>
     <el-drawer v-model="historyVisible" title="历史记录" size="min(850px, 96vw)" class="ledger-drawer"><LedgerHistory v-if="historyVisible && historyId" :ledger-id="historyId" /></el-drawer>
   </div>
 </template>

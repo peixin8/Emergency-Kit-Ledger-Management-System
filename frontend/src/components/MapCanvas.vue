@@ -3,6 +3,7 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import type { LedgerMapPoint } from '../types/ledger'
+import { ledgerCoordinates } from '../types/location'
 
 const props = withDefaults(defineProps<{
   points?: LedgerMapPoint[]
@@ -30,11 +31,12 @@ function drawMarkers() {
       .addTo(markers)
   }
   if (props.selected) {
-    const latitude = Number(props.selected.latitude)
-    const longitude = Number(props.selected.longitude)
-    if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+    const selected = ledgerCoordinates(props.selected)
+    if (selected) {
+      const latitude = Number(selected.latitude)
+      const longitude = Number(selected.longitude)
       L.circleMarker([latitude, longitude], { radius: 10, color: '#b74718', fillColor: '#f07542', fillOpacity: 0.85, weight: 2 }).addTo(markers)
-      map.panTo([latitude, longitude])
+      map.setView([latitude, longitude], 17)
     }
   }
 }
@@ -49,6 +51,7 @@ onMounted(() => {
   if (props.pickable) map.on('click', event => emit('pick', event.latlng.lat.toFixed(7), event.latlng.lng.toFixed(7)))
   drawMarkers()
   setTimeout(() => map?.invalidateSize(), 0)
+  setTimeout(() => map?.invalidateSize(), 350)
 })
 watch(() => [props.points, props.selected], drawMarkers)
 onBeforeUnmount(() => { map?.remove(); map = null; markers = null })

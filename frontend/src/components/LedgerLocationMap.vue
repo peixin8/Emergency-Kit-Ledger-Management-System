@@ -3,9 +3,11 @@ import { onMounted, ref } from 'vue'
 import { listLedgerMapPoints } from '../api/ledger'
 import { conditionLabels } from '../types/ledger'
 import type { LedgerMapPoints } from '../types/ledger'
+import type { Coordinates } from '../types/location'
 import MapCanvas from './MapCanvas.vue'
 
 const emit = defineEmits<{ open: [id: string] }>()
+defineProps<{ selected?: Coordinates | null }>()
 const points = ref<LedgerMapPoints>({ records: [], unlocatedCount: 0 })
 const loading = ref(false)
 const error = ref('')
@@ -35,7 +37,7 @@ onMounted(reload)
     </div>
     <div v-if="error" class="list-error" role="alert">{{ error }} <button type="button" @click="reload">重试</button></div>
     <div class="location-body">
-      <MapCanvas :points="points.records" @open="emit('open', $event)" />
+      <MapCanvas :points="points.records" :selected="selected" @open="emit('open', $event)" />
       <div class="location-list">
         <p v-if="loading" role="status">正在加载点位…</p>
         <p v-else-if="!points.records.length" class="location-empty">暂无已定位设备。可在台账详情中编辑并选取目标地址位置。</p>
