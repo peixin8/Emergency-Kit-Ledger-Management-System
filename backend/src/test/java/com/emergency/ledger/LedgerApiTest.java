@@ -52,7 +52,7 @@ class LedgerApiTest {
             .content(body(code,"A机房","C机房","0"))).andExpect(status().isOk()).andExpect(jsonPath("$.data.version").value("1"));
         mvc.perform(put("/api/v1/ledgers/{id}",id).header("Authorization","Bearer "+token).contentType(MediaType.APPLICATION_JSON)
             .content(body(code,"A机房","D机房","0"))).andExpect(status().isConflict());
-        mvc.perform(delete("/api/v1/ledgers/{id}",id).header("Authorization","Bearer "+token)).andExpect(status().isOk());
+        mvc.perform(delete("/api/v1/ledgers/{id}",id).param("version",json.readTree(mvc.perform(get("/api/v1/ledgers/{id}",id)).andReturn().getResponse().getContentAsString()).path("data").path("version").asText()).header("Authorization","Bearer "+token)).andExpect(status().isOk());
         mvc.perform(get("/api/v1/ledgers/{id}",id).header("Authorization","Bearer "+token)).andExpect(status().isNotFound());
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ledger_audit WHERE ledger_id=?",Integer.class,Long.parseLong(id))).isEqualTo(3);
     }
@@ -65,7 +65,7 @@ class LedgerApiTest {
             .isEqualTo(result.getResponse().getHeader("X-Trace-Id"));
         String id=create("","SHARED-SCOPE-"+System.nanoTime());
         mvc.perform(get("/api/v1/ledgers/{id}",id)).andExpect(status().isOk());
-        mvc.perform(delete("/api/v1/ledgers/{id}",id)).andExpect(status().isOk());
+        mvc.perform(delete("/api/v1/ledgers/{id}",id).param("version",json.readTree(mvc.perform(get("/api/v1/ledgers/{id}",id)).andReturn().getResponse().getContentAsString()).path("data").path("version").asText())).andExpect(status().isOk());
     }
     @Test void blankOptionalPowerBecomesNull() throws Exception {
         String token=login("testadmin","TestOnlyPassword123!");

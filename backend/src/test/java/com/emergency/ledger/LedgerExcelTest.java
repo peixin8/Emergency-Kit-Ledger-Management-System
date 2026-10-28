@@ -162,7 +162,7 @@ class LedgerExcelTest {
         String deletedResponse=mvc.perform(post("/api/v1/ledgers").contentType(MediaType.APPLICATION_JSON)
             .content(template.replace(active,deleted))).andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
         String deletedId=json.readTree(deletedResponse).path("data").path("id").asText();
-        mvc.perform(delete("/api/v1/ledgers/"+deletedId)).andExpect(status().isOk());
+        mvc.perform(delete("/api/v1/ledgers/"+deletedId).param("version","0")).andExpect(status().isOk());
         byte[] exported=mvc.perform(get("/api/v1/ledgers/export").param("keyword",active))
             .andExpect(status().isOk()).andReturn().getResponse().getContentAsByteArray();
         byte[] workbook;

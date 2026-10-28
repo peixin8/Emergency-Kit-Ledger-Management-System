@@ -16,6 +16,7 @@ const listLedgers = vi.fn()
 const getLedger = vi.fn()
 const listLedgerMapPoints = vi.fn()
 const importLedgers = vi.fn()
+const previewLedgerImport = vi.fn()
 const deleteLedger = vi.fn()
 const exportLedgers = vi.fn()
 const createLedger = vi.fn()
@@ -24,6 +25,7 @@ vi.mock('../api/ledger', () => ({
   getLedger: (...args: unknown[]) => getLedger(...args),
   listLedgerMapPoints: (...args: unknown[]) => listLedgerMapPoints(...args),
   createLedger: (...args: unknown[]) => createLedger(...args), updateLedger: vi.fn(), deleteLedger: (...args: unknown[]) => deleteLedger(...args),
+  previewLedgerImport: (...args: unknown[]) => previewLedgerImport(...args), confirmLedgerImport: (...args: unknown[]) => importLedgers(...args),
   importLedgers: (...args: unknown[]) => importLedgers(...args), exportLedgers: (...args: unknown[]) => exportLedgers(...args)
 }))
 
@@ -82,6 +84,7 @@ beforeEach(() => {
     records: [{ id: ledger.id, ledgerCode: ledger.ledgerCode, destinationAddress: ledger.destinationAddress, deviceCondition: ledger.deviceCondition, latitude: '24.4798345', longitude: '118.0894251' }],
     unlocatedCount: 2
   })
+  previewLedgerImport.mockReset().mockResolvedValue({ fileHash: 'a'.repeat(64), previewFingerprint: 'b'.repeat(64), importedCount: 2, createdCount: 1, updatedCount: 1, missingOptionalColumns: [], rows: [] })
   importLedgers.mockReset()
   deleteLedger.mockReset()
   exportLedgers.mockReset()
@@ -162,7 +165,11 @@ it('导入同时新增和覆盖台账时分别提示数量，并刷新列表和�
     Object.defineProperty(fileInput.element, 'files', { configurable: true, value: [file] })
     await fileInput.trigger('change')
     await flushPromises()
-    expect(importLedgers).toHaveBeenCalledWith(file)
+    expect(previewLedgerImport).toHaveBeenCalledWith(file)
+    expect(importLedgers).not.toHaveBeenCalled()
+    await wrapper.findAll('button').find(button => button.text() === '确认导入')!.trigger('click')
+    await flushPromises()
+    expect(importLedgers).toHaveBeenCalledWith(file, 'b'.repeat(64))
     expect(success).toHaveBeenCalledWith(expect.stringContaining('新增 1 条'))
     expect(success).toHaveBeenCalledWith(expect.stringContaining('覆盖 1 条'))
     expect(listLedgers).toHaveBeenCalledTimes(2)
@@ -175,7 +182,7 @@ it('导入同时新增和覆盖台账时分别提示数量，并刷新列表和�
 
 it('导入校验失败时显示后台给出的行号和列名，不刷新列表', async () => {
   const message = '第 4 行「BBU-RRU功耗」：单位不受支持'
-  importLedgers.mockRejectedValue(new ApiError(400, 'VALIDATION_ERROR', message))
+  previewLedgerImport.mockRejectedValue(new ApiError(400, 'VALIDATION_ERROR', message))
   const error = vi.spyOn(ElMessage, 'error').mockImplementation(() => ({ close: () => {} }) as ReturnType<typeof ElMessage.error>)
   try {
     const wrapper = mountLedgerList()
@@ -184,7 +191,7 @@ it('导入校验失败时显示后台给出的行号和列名，不刷新列表'
     Object.defineProperty(fileInput.element, 'files', { configurable: true, value: [new File(['fake'], '现有台账.xlsx')] })
     await fileInput.trigger('change')
     await flushPromises()
-    expect(error).toHaveBeenCalledWith(expect.objectContaining({ message }))
+    expect(wrapper.text()).toContain(message)
     expect(listLedgers).toHaveBeenCalledTimes(1)
     expect(listLedgerMapPoints).toHaveBeenCalledTimes(1)
     wrapper.unmount()
@@ -274,7 +281,7 @@ it('每行删除确认后按该行 ID 删除，并刷新列表和地图', async 
     await actionRows[1]!.findAll('button').find(button => button.text() === '删除')!.trigger('click')
     await flushPromises()
     expect(confirm).toHaveBeenCalledWith(expect.stringContaining('XM-002'), '删除确认', expect.any(Object))
-    expect(deleteLedger).toHaveBeenCalledWith('2')
+    expect(deleteLedger).toHaveBeenCalledWith('2', '1')
     expect(listLedgers).toHaveBeenCalledTimes(2)
     expect(listLedgerMapPoints).toHaveBeenCalledTimes(2)
     expect(wrapper.find('.test-table').text()).not.toContain('XM-002')
@@ -306,10 +313,10 @@ it('首页列表和导出仅传入保留的检索条件', async () => {
   try {
     const wrapper = mountLedgerList()
     await flushPromises()
-    expect(Object.keys(listLedgers.mock.calls[0]![0])).toEqual(['page', 'pageSize', 'keyword'])
+    expect(Object.keys(listLedgers.mock.calls[0]![0])).toEqual(['page', 'pageSize'])
     await wrapper.findAll('.file-actions button').find(button => button.text().includes('导出 Excel'))!.trigger('click')
     await flushPromises()
-    expect(Object.keys(exportLedgers.mock.calls[0]![0])).toEqual(['keyword'])
+    expect(Object.keys(exportLedgers.mock.calls[0]![0])).toEqual([])
     wrapper.unmount()
   } finally { error.mockRestore() }
 })
@@ -318,7 +325,8 @@ it('厦门地图逐台展示已定位设备入口与未定位数量，点击点�
   const wrapper = mountLedgerList()
   await flushPromises()
   expect(wrapper.text()).toContain('厦门设备地图')
-  expect(wrapper.text()).toContain('待定位 2 台')
+  expect(wrapper.text()).toContain('待定位 2 条台账')
+  await wrapper.findAll('button').find(button => button.text() === '展开地图')!.trigger('click')
   const point = wrapper.find('button.map-point-link')
   expect(point.text()).toContain('XM-001')
   await point.trigger('click')
@@ -370,6 +378,7 @@ it('快速切换台账时旧请求晚返回也不能覆盖新点位和新详情'
   getLedger.mockImplementation((id: string) => id === '2' ? Promise.resolve(second) : delayedFirst)
   const wrapper = mountLedgerList()
   await flushPromises()
+  await wrapper.findAll('button').find(button => button.text() === '展开地图')!.trigger('click')
   const codes = wrapper.findAll('button.record-link')
   await codes[0]!.trigger('click')
   await flushPromises()
@@ -384,5 +393,38 @@ it('快速切换台账时旧请求晚返回也不能覆盖新点位和新详情'
   expect(wrapper.findComponent(MapCanvas).props('selected')).toEqual({ latitude: second.latitude, longitude: second.longitude })
   expect(wrapper.find('.test-drawer').text()).toContain('XM-002')
   expect(wrapper.find('.test-drawer').text()).not.toContain('XM-001')
+  wrapper.unmount()
+})
+it('相同条件刷新尚未结束时重复查询复用请求', async () => {
+  const wrapper = mountLedgerList(); await flushPromises()
+  let finish: (value: unknown) => void = () => { throw new Error('未开始') }
+  listLedgers.mockReturnValueOnce(new Promise(resolve => { finish = resolve }))
+  const query = wrapper.findAll('.filter-row button').find(button => button.text().includes('查询'))!
+  await query.trigger('click'); await query.trigger('click')
+  expect(listLedgers).toHaveBeenCalledTimes(2)
+  expect(listLedgerMapPoints).toHaveBeenCalledTimes(2)
+  finish({ records: [ledger], total: 1, page: 1, pageSize: 20 }); await flushPromises()
+  wrapper.unmount()
+})
+it('写入成功后的刷新不复用写入前尚未返回的旧查询', async () => {
+  let oldResponse: (value: unknown) => void = () => { throw new Error('尚未开始') }
+  listLedgers.mockReturnValueOnce(new Promise(resolve => { oldResponse = resolve }))
+  createLedger.mockResolvedValue(ledger)
+  const wrapper = mountLedgerList(); await flushPromises()
+  await wrapper.findAll('button').find(button => button.text().trim() === '新增台账')!.trigger('click')
+  await flushPromises(); wrapper.findComponent(LedgerForm).vm.$emit('save', emptyLedger()); await flushPromises()
+  expect(listLedgers).toHaveBeenCalledTimes(2)
+  oldResponse({ records: [], total: 0, page: 1, pageSize: 20 }); await flushPromises()
+  expect(wrapper.find('.test-table').text()).toContain('XM-001')
+  wrapper.unmount()
+})
+it('切换待定位筛选后地图查询失败不展示旧筛选的点位', async () => {
+  const wrapper = mountLedgerList(); await flushPromises()
+  await wrapper.findAll('button').find(button => button.text() === '展开地图')!.trigger('click')
+  expect(wrapper.find('button.map-point-link').exists()).toBe(true)
+  listLedgerMapPoints.mockRejectedValueOnce(new Error('地图查询失败'))
+  await wrapper.findAll('.filter-row button').find(button => button.text() === '待定位')!.trigger('click'); await flushPromises()
+  expect(wrapper.find('button.map-point-link').exists()).toBe(false)
+  expect(wrapper.text()).toContain('地图查询失败')
   wrapper.unmount()
 })

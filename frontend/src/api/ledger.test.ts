@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from './http'
-import { exportLedgers, importLedgers, listLedgerHistory, listLedgerMapPoints, listLedgers, updateLedger } from './ledger'
+import { deleteLedger, exportLedgers, importLedgers, listLedgerHistory, listLedgerMapPoints, listLedgers, updateLedger } from './ledger'
 import { emptyLedger } from '../types/ledger'
 
 const success = (data: unknown) => new Response(JSON.stringify({ code: 'OK', message: '成功', data }), { status: 200, headers: { 'Content-Type': 'application/json' } })
@@ -77,4 +77,10 @@ describe('台账请求', () => {
     expect(result.size).toBe(4)
     expect(String(fetcher.mock.calls[0]?.[0])).toContain('keyword=%E6%9C%BA%E6%88%BF&direction=IN')
   })
+})
+
+it('删除必须携带所见字符串版本，避免删除他人的新修改', async () => {
+  const fetcher = vi.spyOn(globalThis, 'fetch').mockResolvedValue(success(null))
+  await deleteLedger('42', '9007199254740995')
+  expect(String(fetcher.mock.calls[0]?.[0])).toContain('/ledgers/42?version=9007199254740995')
 })

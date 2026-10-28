@@ -281,7 +281,7 @@ class P2HttpRegressionTest {
         if(bothLegacy) original=moveToLegacyOrganization(original);
         var other=moveToLegacyOrganization(create(body(code())));
         jdbc.update("UPDATE emergency_device_ledger SET ledger_code=? WHERE id=?",original.path("ledgerCode").asText(),other.path("id").asText());
-        if(deletedOther) http.delete(ROOT+"/"+other.path("id").asText());
+        if(deletedOther) http.delete(ROOT+"/"+other.path("id").asText()+"?version="+other.path("version").asText());
         var earlier=create(body(code()));
         byte[] file=workbookWithCodes(original,code(),earlier.path("ledgerCode").asText(),original.path("ledgerCode").asText());
         var before=counts(); var response=upload("台账.xlsx",file,null);
@@ -295,7 +295,7 @@ class P2HttpRegressionTest {
         var deleted=moveToLegacyOrganization(create(body(code())));
         var earlier=create(body(code()));
         byte[] file=workbookWithCodes(deleted,code(),earlier.path("ledgerCode").asText(),deleted.path("ledgerCode").asText());
-        http.delete(ROOT+"/"+deleted.path("id").asText());
+        http.delete(ROOT+"/"+deleted.path("id").asText()+"?version="+deleted.path("version").asText());
         var before=counts(); var response=upload("台账.xlsx",file,null);
         error(response,409,"DUPLICATE_LEDGER_CODE");
         assertThat(response.getBody().path("message").asText()).contains("第 4 行","已删除");

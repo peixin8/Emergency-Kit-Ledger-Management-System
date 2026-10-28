@@ -14,18 +14,35 @@ public class LedgerService {
     private final ObjectMapper json;
     public LedgerService(LedgerRepository repository,ObjectMapper json) { this.repository=repository; this.json=json; }
     public LedgerRepository.Page list(CurrentUser user,int page,int pageSize,String keyword,String status,String direction) {
-        if(page<1||pageSize<1||pageSize>100||((long)page-1)*pageSize>Integer.MAX_VALUE) throw bad("分页参数无效");
+        return list(user,page,pageSize,keyword,status,direction,null);
+    }
+    public LedgerRepository.Page list(CurrentUser user,int page,int pageSize,String keyword,String status,String direction,String locationStatus) {
+        validatePage(page,pageSize);
+        validateFilters(keyword,status,direction,locationStatus);
+        return repository.list(page,pageSize,keyword,status,direction,locationStatus);
+    }
+    void validateFilters(String keyword,String status,String direction,String locationStatus) {
         if(keyword!=null&&keyword.length()>100) throw bad("搜索词过长");
         if(status!=null&&!status.isBlank()&&!status.matches("GOOD|REPAIR|FAULT|RETIRED")) throw bad("设备状况无效");
         if(direction!=null&&!direction.isBlank()&&!direction.matches("IN|OUT|TRANSFER|UNSPECIFIED")) throw bad("进出方向无效");
-        return repository.list(page,pageSize,keyword,status,direction);
+        if(locationStatus!=null&&!locationStatus.isBlank()&&!locationStatus.matches("LOCATED|UNLOCATED")) throw bad("定位状态无效");
     }
     public LedgerRecord get(CurrentUser user,long id) {
         LedgerRecord record=repository.find(id);
         if(record==null) throw new ApiException(HttpStatus.NOT_FOUND,"NOT_FOUND","台账不存在");
         return record;
     }
-    public LedgerRepository.MapPoints mapPoints(CurrentUser user) { return repository.mapPoints(); }
+    public LedgerRepository.MapPoints mapPoints(CurrentUser user) { return mapPoints(user,null,null,null,null); }
+    public LedgerRepository.MapPoints mapPoints(CurrentUser user,String keyword,String status,String direction,String locationStatus) {
+        validateFilters(keyword,status,direction,locationStatus);
+        return repository.mapPoints(keyword,status,direction,locationStatus);
+    }
+    public LedgerRepository.DeletedPage deleted(CurrentUser user,int page,int pageSize,String keyword,java.time.LocalDate from,java.time.LocalDate to) {
+        validatePage(page,pageSize);
+        if(keyword!=null&&keyword.length()>100) throw bad("搜索词过长");
+        if(from!=null&&to!=null&&from.isAfter(to)) throw bad("删除起始日期不能晚于结束日期");
+        return repository.deleted(page,pageSize,keyword,from,to);
+    }
     public LedgerRepository.HistoryPage history(CurrentUser user,long id,int page,int pageSize) {
         validatePage(page,pageSize);
         if(!repository.existsIncludingDeleted(id))
@@ -56,7 +73,7 @@ public class LedgerService {
         return updateLocked(user,old,request,power,parseVersion(request.version()));
     }
     @Transactional
-    public ImportOutcome importUpsert(CurrentUser user,LedgerRequest request) {
+    public ImportResult importUpsert(CurrentUser user,LedgerRequest request) {
         canEdit(user);
         BigDecimal power=validate(request,false);
         repository.lockSharedWorkspace(user.organizationId());
@@ -66,13 +83,13 @@ public class LedgerService {
             long id=repository.insert(user.organizationId(),request,power);
             LedgerRecord created=get(user,id);
             repository.audit(user.organizationId(),id,user.id(),"CREATE",null,serialize(created));
-            return ImportOutcome.CREATED;
+            return new ImportResult(id,ImportOutcome.CREATED);
         }
         LedgerRepository.CodeMatch match=matches.get(0);
         if(match.deleted()) throw duplicateCode();
         LedgerRecord old=get(user,match.id());
         updateLocked(user,old,request,power,Long.parseLong(old.version()));
-        return ImportOutcome.UPDATED;
+        return new ImportResult(match.id(),ImportOutcome.UPDATED);
     }
     private LedgerRecord updateLocked(CurrentUser user,LedgerRecord old,LedgerRequest request,BigDecimal power,long version) {
         long id=Long.parseLong(old.id());
@@ -84,12 +101,15 @@ public class LedgerService {
         return result;
     }
     public enum ImportOutcome { CREATED, UPDATED }
+    public record ImportResult(long ledgerId,ImportOutcome outcome) {}
     @Transactional
-    public void delete(CurrentUser user,long id) {
+    public void delete(CurrentUser user,long id,String version) {
         if(!"ADMIN".equals(user.role())) throw new ApiException(HttpStatus.FORBIDDEN,"FORBIDDEN","仅管理员可删除台账");
+        long expectedVersion=parseVersion(version);
+        repository.lockSharedWorkspace(user.organizationId());
         LedgerRecord old=get(user,id);
         long recordOrg=Long.parseLong(old.organizationId());
-        int rows=repository.delete(recordOrg,id,Long.parseLong(old.version()));
+        int rows=repository.delete(recordOrg,id,expectedVersion);
         if(rows!=1) throw new ApiException(HttpStatus.CONFLICT,"VERSION_CONFLICT","台账已被修改，请刷新后重试");
         repository.audit(recordOrg,id,user.id(),"DELETE",serialize(old),null);
     }
@@ -139,7 +159,7 @@ public class LedgerService {
         throw bad("IP 地址格式无效");
     }
     private long parseVersion(String version) {
-        try { long v=Long.parseLong(version); if(v>=0) return v; } catch(Exception ignored) { }
+        try { if(version==null||!version.matches("[0-9]+")) throw bad("version 格式无效"); long v=Long.parseLong(version); if(v>=0) return v; } catch(Exception ignored) { }
         throw bad("version 必须为非负整数的十进制字符串");
     }
     private String serialize(Object value) {

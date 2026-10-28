@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, expect, it, vi } from 'vitest'
+import LedgerDetail from './LedgerDetail.vue'
 import LedgerHistory from './LedgerHistory.vue'
 import type { Ledger, LedgerHistoryPage } from '../types/ledger'
 
@@ -46,7 +47,8 @@ it('每条历史显示简要摘要，点击后才展示该次完整只读快照'
 
   const entries = wrapper.findAll('button.history-entry')
   expect(entries).toHaveLength(3)
-  expect(wrapper.text()).not.toContain('修改后备注')
+  expect(wrapper.find('.history-change-summary').text()).toContain('备注：创建时备注 → 修改后备注')
+  expect(wrapper.findComponent(LedgerDetail).exists()).toBe(false)
   expect(wrapper.text()).not.toContain('网管 IP')
   expect(wrapper.text()).toContain('删除台账')
   expect(wrapper.text()).toContain('编辑修改')
@@ -62,6 +64,6 @@ it('每条历史显示简要摘要，点击后才展示该次完整只读快照'
 
   await entries[0]!.trigger('click')
   expect(wrapper.text()).toContain('删除前')
-  expect(wrapper.findAll('.history-snapshot h4').map(heading => heading.text())).toEqual(['删除前', '流转申请', '目标地址点位', '设备信息', '网络参数', '记录信息'])
+  expect(wrapper.findAll('.history-snapshot h4').map(heading => heading.text())).toEqual(['删除前', '流转申请', '目标地址点位', '设备信息', '网络参数'])
   wrapper.unmount()
 })

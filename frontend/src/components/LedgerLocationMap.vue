@@ -1,24 +1,29 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { ref, watch } from 'vue'
 import { listLedgerMapPoints } from '../api/ledger'
 import { conditionLabels } from '../types/ledger'
-import type { LedgerMapPoints } from '../types/ledger'
+import type { LedgerFilters, LedgerMapPoints } from '../types/ledger'
 import type { Coordinates } from '../types/location'
 import MapCanvas from './MapCanvas.vue'
 
-const emit = defineEmits<{ open: [id: string] }>()
-defineProps<{ selected?: Coordinates | null }>()
+const emit = defineEmits<{ open: [id: string]; unlocated: []; refresh: [] }>()
+const props = defineProps<{ selected?: Coordinates | null }>()
+const expanded = ref(false)
+watch(() => props.selected, value => { if (value) expanded.value = true })
 const points = ref<LedgerMapPoints>({ records: [], unlocatedCount: 0 })
 const loading = ref(false)
 const error = ref('')
 let sequence = 0
-async function reload() {
+let filterKey = ''
+async function reload(filters: LedgerFilters = {}) {
+  const key = JSON.stringify(filters)
+  if (key !== filterKey) { points.value = { records: [], unlocatedCount: 0 }; filterKey = key }
   const current = ++sequence
   loading.value = true
   error.value = ''
   try {
-    const result = await listLedgerMapPoints()
-    if (current === sequence) points.value = result
+    const result = await listLedgerMapPoints(filters)
+    if (current === sequence) { points.value = result; return true }
   } catch (reason) {
     if (current === sequence) error.value = reason instanceof Error ? reason.message : '点位加载失败'
   } finally {
@@ -26,17 +31,17 @@ async function reload() {
   }
 }
 defineExpose({ reload })
-onMounted(reload)
+
 </script>
 
 <template>
   <section class="location-panel" aria-label="厦门设备地图">
     <div class="location-heading">
       <div><h2>厦门设备地图</h2><p>每个圆点对应一条已选定目标地址坐标的台账。点击圆点或旁边的记录查看完整信息。</p></div>
-      <div class="location-counts"><span>已定位 {{ points.records.length }} 台</span><span>待定位 {{ points.unlocatedCount }} 台</span><button type="button" :disabled="loading" @click="reload">刷新点位</button></div>
+      <div class="location-counts"><span>已定位 {{ points.records.length }} 条台账</span><button type="button" @click="emit('unlocated')">待定位 {{ points.unlocatedCount }} 条台账</button><button type="button" :disabled="loading" @click="emit('refresh')">刷新点位</button><button type="button" :aria-expanded="expanded" @click="expanded = !expanded">{{ expanded ? '收起地图' : '展开地图' }}</button></div>
     </div>
-    <div v-if="error" class="list-error" role="alert">{{ error }} <button type="button" @click="reload">重试</button></div>
-    <div class="location-body">
+    <div v-if="error" class="list-error" role="alert">{{ error }} <button type="button" @click="emit('refresh')">重试</button></div>
+    <div v-if="expanded" class="location-body">
       <MapCanvas :points="points.records" :selected="selected" @open="emit('open', $event)" />
       <div class="location-list">
         <p v-if="loading" role="status">正在加载点位…</p>
@@ -50,6 +55,6 @@ onMounted(reload)
         </ul>
       </div>
     </div>
-    <p class="location-footnote">未定位台账不会生成推测点位；请打开对应台账补录坐标。</p>
+    <p v-if="expanded" class="location-footnote">未定位台账不会生成推测点位；请打开对应台账补录坐标。</p>
   </section>
 </template>

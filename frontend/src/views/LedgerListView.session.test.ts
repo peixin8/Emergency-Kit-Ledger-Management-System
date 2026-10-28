@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { nextTick } from 'vue'
-import ElementPlus from 'element-plus'
+import ElementPlus, { ElMessageBox } from 'element-plus'
 import LedgerListView from './LedgerListView.vue'
 import type { Ledger } from '../types/ledger'
 
@@ -99,6 +99,7 @@ async function fillValidCreate() {
 }
 
 beforeEach(async () => {
+  vi.spyOn(ElMessageBox, 'confirm').mockImplementation(() => Promise.resolve('confirm') as ReturnType<typeof ElMessageBox.confirm>)
   vi.setSystemTime(new Date('2026-10-27T04:00:00Z'))
   // jsdom 没有布局观察器；不替换组件行为。
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
@@ -209,6 +210,9 @@ describe('新增台账独立表单会话', { timeout: 15_000 }, () => {
     await fillValidCreate()
     await click(button('保存台账', drawer()))
     await vi.waitFor(() => expect(button('取消', drawer()).disabled).toBe(true))
+    expect(input('备注').disabled).toBe(true)
+    expect(input('台账编号').disabled).toBe(true)
+    expect(drawer().querySelector<HTMLButtonElement>('.address-search-button')?.disabled).toBe(true)
     await click(button('保存台账', drawer()))
     await click(drawer().querySelector<HTMLButtonElement>('.el-drawer__close-btn')!)
     expect(drawer().classList.contains('open')).toBe(true)
@@ -226,4 +230,57 @@ describe('新增台账独立表单会话', { timeout: 15_000 }, () => {
     await click(button('保存台账', drawer()))
     await vi.waitFor(() => expect(document.body.textContent).toContain('台账已创建'))
   })
+})
+
+it('取消草稿需要明确放弃，继续编辑保留输入，浏览器离开会提醒', async () => {
+  vi.mocked(ElMessageBox.confirm).mockRestore()
+  await openCreate()
+  await enter('备注', '保留我的输入')
+  await click(button('取消', drawer()))
+  expect(document.body.textContent).toContain('尚有未保存的修改')
+  await click(button('继续编辑', document.body))
+  expect(input('备注').value).toBe('保留我的输入')
+  const event = new Event('beforeunload', { cancelable: true })
+  window.dispatchEvent(event)
+  expect(event.defaultPrevented).toBe(true)
+})
+
+it('版本冲突保留草稿，比较最新值后必须明确确认才能载入新版本', async () => {
+  saveResponse = async () => new Response(JSON.stringify({ code: 'VERSION_CONFLICT', message: '已变化', data: null }), { status: 409 })
+  await openEdit('YJB-A')
+  await enter('备注', '我的草稿')
+  await click(button('保存台账', drawer()))
+  expect(input('备注').value).toBe('我的草稿')
+  expect(button('保存台账', drawer()).disabled).toBe(true)
+  expect(input('备注').disabled).toBe(true)
+  const newest = { ...recordA, version: '9007199254740996', remarks: '他人修改' }
+  vi.mocked(fetch).mockResolvedValueOnce(success(newest))
+  await click(button('查看最新并比较', drawer()))
+  expect(drawer().querySelector('.comparison-table')?.textContent).toContain('他人修改')
+  expect(input('备注').value).toBe('我的草稿')
+  vi.mocked(ElMessageBox.confirm).mockRejectedValueOnce('cancel')
+  await click(button('确认载入最新，重新编辑', drawer()))
+  expect(input('备注').value).toBe('我的草稿')
+  await click(button('确认载入最新，重新编辑', drawer()))
+  expect(input('备注').value).toBe('他人修改')
+})
+
+it('切换当前与已删除视图同样保护未保存草稿', async () => {
+  vi.mocked(ElMessageBox.confirm).mockRejectedValueOnce('cancel')
+  await openCreate(); await enter('备注', '未保存')
+  await click(button('已删除记录'))
+  expect(ElMessageBox.confirm).toHaveBeenCalledWith(expect.stringContaining('尚有未保存'), '放弃修改？', expect.any(Object))
+  expect(input('备注').value).toBe('未保存')
+  expect(document.querySelector('.deleted-ledgers')).toBeNull()
+})
+it('旧记录最新值晚返回不能注入另一条记录的冲突比较', async () => {
+  saveResponse = async () => new Response(JSON.stringify({ code: 'VERSION_CONFLICT', message: '已变化', data: null }), { status: 409 })
+  await openEdit('YJB-A'); await enter('备注', 'A草稿'); await click(button('保存台账', drawer()))
+  let finish: (value: Response) => void = () => { throw new Error('尚未发请求') }
+  vi.mocked(fetch).mockImplementationOnce(() => new Promise<Response>(resolve => { finish = resolve }))
+  await click(button('查看最新并比较', drawer()))
+  await openEdit('YJB-B'); await enter('备注', 'B草稿'); await click(button('保存台账', drawer()))
+  finish(success({ ...recordA, remarks: 'A最新值' })); await flushPromises()
+  expect(drawer().querySelector('.comparison-table')).toBeNull()
+  expect(input('备注').value).toBe('B草稿')
 })

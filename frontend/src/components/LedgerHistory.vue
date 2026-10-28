@@ -3,6 +3,7 @@ import { ref, watch } from 'vue'
 import { listLedgerHistory } from '../api/ledger'
 import { formatLedgerTimestamp } from '../types/date'
 import type { LedgerHistoryPage } from '../types/ledger'
+import { changedFields } from '../types/history'
 import LedgerDetail from './LedgerDetail.vue'
 
 const props = defineProps<{ ledgerId: string }>()
@@ -46,6 +47,7 @@ watch(() => props.ledgerId, () => { page.value = 1; selectedId.value = null; voi
             <span class="history-entry-meta">{{ formatLedgerTimestamp(entry.occurredAt) }} · 共享用户 · 记录 {{ entry.id }}</span>
             <span class="history-entry-open">{{ selectedId === entry.id ? '收起' : '查看详情' }}</span>
           </button>
+          <p v-if="entry.before && entry.after" class="history-change-summary">变化：{{ changedFields(entry.before, entry.after).map(field => `${field.label}：${field.before} → ${field.after}`).join('；') || '无业务字段变化' }}</p>
           <div v-if="selectedId === entry.id" class="history-snapshot">
             <div v-if="entry.before"><h4>{{ entry.action === 'DELETE' ? '删除前' : '修改前' }}</h4><LedgerDetail :ledger="entry.before" /></div>
             <div v-if="entry.after"><h4>{{ entry.action === 'CREATE' ? '创建时' : '修改后' }}</h4><LedgerDetail :ledger="entry.after" /></div>

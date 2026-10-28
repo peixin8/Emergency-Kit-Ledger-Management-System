@@ -47,8 +47,8 @@ public class ApiErrors {
     }
     @ExceptionHandler({HttpMessageNotReadableException.class, IllegalArgumentException.class})
     ResponseEntity<ApiResponse<Void>> badRequest(Exception e) { return ResponseEntity.badRequest().body(ApiResponse.error("VALIDATION_ERROR", "请求格式或字段值无效")); }
-    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
-    ResponseEntity<ApiResponse<Void>> badParameter(MethodArgumentTypeMismatchException e) { return ResponseEntity.badRequest().body(ApiResponse.error("VALIDATION_ERROR", "路径或查询参数格式无效")); }
+    @ExceptionHandler({MethodArgumentTypeMismatchException.class, org.springframework.web.bind.MissingServletRequestParameterException.class})
+    ResponseEntity<ApiResponse<Void>> badParameter(Exception e) { return ResponseEntity.badRequest().body(ApiResponse.error("VALIDATION_ERROR", "路径或查询参数格式无效")); }
     @ExceptionHandler(DuplicateKeyException.class)
     ResponseEntity<ApiResponse<Void>> duplicate(DuplicateKeyException e) {
         String detail = e.getMostSpecificCause().getMessage();
