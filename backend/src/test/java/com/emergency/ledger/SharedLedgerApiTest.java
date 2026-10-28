@@ -41,7 +41,7 @@ class SharedLedgerApiTest {
         mvc.perform(get("/api/v1/ledgers/{id}", id)).andExpect(status().isOk());
         mvc.perform(put("/api/v1/ledgers/{id}", id).contentType(MediaType.APPLICATION_JSON)
             .content(body(code, "C机房", "0"))).andExpect(status().isOk());
-        mvc.perform(delete("/api/v1/ledgers/{id}", id)).andExpect(status().isOk());
+        mvc.perform(delete("/api/v1/ledgers/{id}", id).param("version",json.readTree(mvc.perform(get("/api/v1/ledgers/{id}",id)).andReturn().getResponse().getContentAsString()).path("data").path("version").asText())).andExpect(status().isOk());
         mvc.perform(get("/api/v1/ledgers/{id}", id)).andExpect(status().isNotFound());
         String response = mvc.perform(get("/api/v1/ledgers/{id}/history", id))
             .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
@@ -78,7 +78,7 @@ class SharedLedgerApiTest {
         mvc.perform(put("/api/v1/ledgers/{id}",id).contentType(MediaType.APPLICATION_JSON)
             .content(body(code,"C机房","0"))).andExpect(status().isOk());
         assertThat(jdbc.queryForObject("SELECT organization_id FROM emergency_device_ledger WHERE id=?",Long.class,id)).isEqualTo(orgId);
-        mvc.perform(delete("/api/v1/ledgers/{id}",id)).andExpect(status().isOk());
+        mvc.perform(delete("/api/v1/ledgers/{id}",id).param("version",json.readTree(mvc.perform(get("/api/v1/ledgers/{id}",id)).andReturn().getResponse().getContentAsString()).path("data").path("version").asText())).andExpect(status().isOk());
         mvc.perform(get("/api/v1/ledgers/{id}/history",id))
             .andExpect(status().isOk()).andExpect(jsonPath("$.data.total").value(2));
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ledger_audit WHERE ledger_id=? AND organization_id=?",Integer.class,id,orgId)).isEqualTo(2);

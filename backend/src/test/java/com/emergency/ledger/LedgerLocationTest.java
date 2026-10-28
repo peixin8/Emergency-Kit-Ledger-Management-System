@@ -47,7 +47,7 @@ class LedgerLocationTest {
             .andExpect(jsonPath("$.data.records[?(@.id=='"+id+"')].latitude").value("24.4798341"));
         mvc.perform(get("/api/v1/ledgers/{id}/history",id)).andExpect(status().isOk())
             .andExpect(jsonPath("$.data.records[0].after.longitude").value("118.0894257"));
-        mvc.perform(delete("/api/v1/ledgers/{id}",id)).andExpect(status().isOk());
+        mvc.perform(delete("/api/v1/ledgers/{id}",id).param("version",json.readTree(mvc.perform(get("/api/v1/ledgers/{id}",id)).andReturn().getResponse().getContentAsString()).path("data").path("version").asText())).andExpect(status().isOk());
         String map=mvc.perform(get("/api/v1/ledgers/map-points"))
             .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
         for(JsonNode point:json.readTree(map).path("data").path("records")) assertThat(point.path("id").asText()).isNotEqualTo(id);
@@ -57,7 +57,7 @@ class LedgerLocationTest {
         String code="NOLOC-"+System.nanoTime(); JsonNode created=create(body(code));
         String id=created.path("id").asText();
         assertThat(unlocatedCount()).isEqualTo(before+1);
-        mvc.perform(delete("/api/v1/ledgers/{id}",id)).andExpect(status().isOk());
+        mvc.perform(delete("/api/v1/ledgers/{id}",id).param("version",json.readTree(mvc.perform(get("/api/v1/ledgers/{id}",id)).andReturn().getResponse().getContentAsString()).path("data").path("version").asText())).andExpect(status().isOk());
         assertThat(unlocatedCount()).isEqualTo(before);
         Map<String,Object> invalid=body("BADLOC-"+System.nanoTime()); invalid.put("latitude","24.1");
         mvc.perform(post("/api/v1/ledgers").contentType(MediaType.APPLICATION_JSON)
@@ -87,6 +87,6 @@ class LedgerLocationTest {
             .andExpect(jsonPath("$.data.latitude").value(org.hamcrest.Matchers.nullValue()));
         mvc.perform(get("/api/v1/ledgers/{id}/history",id)).andExpect(status().isOk())
             .andExpect(jsonPath("$.data.records[0].before.latitude").value("24.5"));
-        mvc.perform(delete("/api/v1/ledgers/{id}",id)).andExpect(status().isOk());
+        mvc.perform(delete("/api/v1/ledgers/{id}",id).param("version",json.readTree(mvc.perform(get("/api/v1/ledgers/{id}",id)).andReturn().getResponse().getContentAsString()).path("data").path("version").asText())).andExpect(status().isOk());
     }
 }

@@ -22,7 +22,7 @@ class LedgerMultipartLimitTest {
         var result=post(new byte[2*1024*1024+1]);
         assertThat(result.getStatusCode().value()).isEqualTo(413);
         var body=json.readTree(result.getBody());
-        assertThat(body.path("code").asText()).isEqualTo("FILE_TOO_LARGE");
+        assertThat(body.path("code").asText()).isEqualTo("UPLOAD_TOO_LARGE");
         assertThat(body.path("message").asText()).contains("2 MB");
         assertThat(body.path("traceId").asText()).isNotBlank();
     }

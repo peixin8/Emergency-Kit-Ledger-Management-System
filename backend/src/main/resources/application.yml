@@ -1,17 +1,22 @@
 server:
   port: 8080
+  tomcat:
+    # 拒绝超限后读完并丢弃剩余请求，确保客户端能收到约定的 413 JSON。
+    max-swallow-size: -1
 spring:
   datasource:
     url: ${DB_URL:jdbc:mysql://localhost:3306/emergency_ledger?useSSL=false&serverTimezone=Asia/Shanghai}
     username: ${DB_USERNAME:emergency}
     password: ${DB_PASSWORD:}
+    hikari:
+      connection-init-sql: SET time_zone = '+08:00'
   flyway:
     enabled: true
   jackson:
     time-zone: Asia/Shanghai
   servlet:
     multipart:
-      max-file-size: 3MB
+      max-file-size: 2MB
       max-request-size: 3MB
 app:
   geocoding:

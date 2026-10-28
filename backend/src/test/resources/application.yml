@@ -1,15 +1,20 @@
 spring:
-  servlet:
-    multipart:
-      max-file-size: 3MB
-      max-request-size: 3MB
   datasource:
     url: jdbc:h2:mem:ledger_test;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1
     username: sa
     password:
     driver-class-name: org.h2.Driver
+    hikari:
+      connection-init-sql: SET TIME ZONE '+08:00'
   flyway:
     enabled: true
+  servlet:
+    multipart:
+      max-file-size: 2MB
+      max-request-size: 3MB
+server:
+  tomcat:
+    max-swallow-size: -1
 app:
   admin:
     username: testadmin

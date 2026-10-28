@@ -48,7 +48,9 @@ try {
   $updated = Invoke-RestMethod -Uri "$base/api/v1/ledgers/$id" -Method Put -ContentType 'application/json' -Body ($record | ConvertTo-Json -Depth 10)
   if ($updated.data.remarks -ne '已通过更新验证') { throw '修改结果不符合预期。' }
 } finally {
-  Invoke-RestMethod -Uri "$base/api/v1/ledgers/$id" -Method Delete | Out-Null
+  $cleanup = Invoke-RestMethod -Uri "$base/api/v1/ledgers/$id"
+  $cleanupVersion = [Uri]::EscapeDataString([string]$cleanup.data.version)
+  Invoke-RestMethod -Uri "$base/api/v1/ledgers/${id}?version=$cleanupVersion" -Method Delete | Out-Null
   Write-Output "已软删除测试记录：$id"
 }
 

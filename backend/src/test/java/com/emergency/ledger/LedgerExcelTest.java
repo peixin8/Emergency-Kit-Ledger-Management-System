@@ -56,7 +56,7 @@ class LedgerExcelTest {
             }));
             assertThat(locked.await(5,TimeUnit.SECONDS)).isTrue();
             CountDownLatch started=new CountDownLatch(1);
-            var deletion=pool.submit(() -> { started.countDown(); ledgerService.delete(identity.current(),id); });
+            var deletion=pool.submit(() -> { started.countDown(); ledgerService.delete(identity.current(),id,"0"); });
             assertThat(started.await(5,TimeUnit.SECONDS)).isTrue();
             assertThatThrownBy(() -> deletion.get(500,TimeUnit.MILLISECONDS)).isInstanceOf(TimeoutException.class);
             assertThat(jdbc.queryForObject("SELECT deleted FROM emergency_device_ledger WHERE id=?",Boolean.class,id)).isFalse();
@@ -208,7 +208,7 @@ class LedgerExcelTest {
         String deletedResponse=mvc.perform(post("/api/v1/ledgers").contentType(MediaType.APPLICATION_JSON)
             .content(template.replace(active,deleted))).andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
         String deletedId=json.readTree(deletedResponse).path("data").path("id").asText();
-        mvc.perform(delete("/api/v1/ledgers/"+deletedId)).andExpect(status().isOk());
+        mvc.perform(delete("/api/v1/ledgers/"+deletedId).param("version","0")).andExpect(status().isOk());
         byte[] exported=mvc.perform(get("/api/v1/ledgers/export").param("keyword",active))
             .andExpect(status().isOk()).andReturn().getResponse().getContentAsByteArray();
         byte[] workbook;
@@ -366,9 +366,17 @@ class LedgerExcelTest {
         mvc.perform(multipart("/api/v1/ledgers/import").file(file(new byte[0])))
             .andExpect(status().isBadRequest());
         mvc.perform(multipart("/api/v1/ledgers/import").file(file(new byte[2*1024*1024+1])))
-            .andExpect(status().isPayloadTooLarge());
+            .andExpect(status().isPayloadTooLarge()).andExpect(jsonPath("$.code").value("UPLOAD_TOO_LARGE"));
         mvc.perform(multipart("/api/v1/ledgers/import").file(file("not xlsx".getBytes())))
             .andExpect(status().isBadRequest());
+    }
+
+    @Test void businessSizeGuardAlsoReturnsCompleteLengthDelimitedJson() throws Exception {
+        var response=mvc.perform(multipart("/api/v1/ledgers/import").file(file(new byte[2097153])))
+            .andExpect(status().isPayloadTooLarge()).andExpect(jsonPath("$.code").value("UPLOAD_TOO_LARGE"))
+            .andReturn().getResponse();
+        assertThat(response.getHeader("Content-Length")).isEqualTo(Integer.toString(response.getContentAsByteArray().length));
+        assertThat(response.getHeader("Content-Type")).isEqualTo(MediaType.APPLICATION_JSON_VALUE);
     }
 
     @Test void formulaInLaterRowReportsLineAndRollsBackEarlierRows() throws Exception {

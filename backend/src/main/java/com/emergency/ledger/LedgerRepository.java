@@ -5,6 +5,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDateTime;
+import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
@@ -27,7 +28,7 @@ public class LedgerRepository {
     private static final RowMapper<LedgerRecord> MAPPER = (rs,row) -> new LedgerRecord(
         Long.toString(rs.getLong("id")),Long.toString(rs.getLong("organization_id")),rs.getString("ledger_code"),rs.getString("original_address"),rs.getString("destination_address"),
         rs.getString("application_method"),rs.getString("applicant_contact"),rs.getString("applicant_phone"),rs.getString("device_condition"),rs.getString("device_condition_detail"),rs.getString("direction"),
-        rs.getDate("application_date").toLocalDate(),rs.getString("ptn_port"),rs.getString("access_room"),rs.getString("fiber_core"),rs.getString("network_standard"),rs.getString("bbu_model"),rs.getString("rru_model"),
+        rs.getObject("application_date",LocalDate.class),rs.getString("ptn_port"),rs.getString("access_room"),rs.getString("fiber_core"),rs.getString("network_standard"),rs.getString("bbu_model"),rs.getString("rru_model"),
         decimal(rs,"bbu_rru_power_watts"),rs.getString("management_ip"),intOrNull(rs,"management_vlan"),rs.getString("business_ip"),intOrNull(rs,"business_vlan"),
         rs.getString("device_serial_no"),rs.getString("asset_owner"),rs.getString("remarks"),coordinate(rs,"latitude"),coordinate(rs,"longitude"),rs.getObject("created_at",LocalDateTime.class).atZone(ZoneId.of("Asia/Shanghai")).toOffsetDateTime(),rs.getObject("updated_at",LocalDateTime.class).atZone(ZoneId.of("Asia/Shanghai")).toOffsetDateTime(),Long.toString(rs.getLong("version")));
     private static String decimal(ResultSet rs,String key) throws SQLException { BigDecimal v=rs.getBigDecimal(key); return v==null?null:v.setScale(2).toPlainString(); }
@@ -92,22 +93,57 @@ public class LedgerRepository {
         return jdbc.update("UPDATE emergency_device_ledger SET deleted=TRUE,version=version+1,updated_at=CURRENT_TIMESTAMP WHERE organization_id=? AND id=? AND version=? AND deleted=FALSE",organizationId,id,version);
     }
     public Page list(int page,int pageSize,String keyword,String status,String direction) {
+        return list(page,pageSize,keyword,status,direction,null);
+    }
+    private record Filter(String sql,List<Object> args) {}
+    private Filter activeFilter(String keyword,String status,String direction,String locationStatus) {
         StringBuilder where=new StringBuilder(" WHERE deleted=FALSE");
         List<Object> args=new ArrayList<>();
-        if(keyword!=null&&!keyword.isBlank()) { where.append(" AND (ledger_code LIKE ? OR original_address LIKE ? OR destination_address LIKE ? OR applicant_contact LIKE ?)"); String k="%"+keyword.trim().replace("\\","\\\\").replace("%","\\%").replace("_","\\_")+"%"; for(int i=0;i<4;i++) args.add(k); }
+        if(keyword!=null&&!keyword.isBlank()) {
+            String[] fields={"ledger_code","original_address","destination_address","applicant_contact","device_serial_no","access_room","management_ip","business_ip","asset_owner"};
+            where.append(" AND (");
+            for(int i=0;i<fields.length;i++) { if(i>0) where.append(" OR "); where.append(fields[i]).append(" LIKE ?"); args.add(search(keyword)); }
+            where.append(")");
+        }
         if(status!=null&&!status.isBlank()) { where.append(" AND device_condition=?"); args.add(status); }
         if(direction!=null&&!direction.isBlank()) { where.append(" AND direction=?"); args.add(direction); }
-        long total=jdbc.queryForObject("SELECT COUNT(*) FROM emergency_device_ledger"+where,Long.class,args.toArray());
-        List<Object> paged=new ArrayList<>(args); paged.add(pageSize); paged.add(((long)page-1)*pageSize);
-        List<LedgerRecord> records=jdbc.query("SELECT "+FIELDS+" FROM emergency_device_ledger"+where+" ORDER BY id DESC LIMIT ? OFFSET ?",MAPPER,paged.toArray());
+        if("LOCATED".equals(locationStatus)) where.append(" AND latitude IS NOT NULL AND longitude IS NOT NULL");
+        if("UNLOCATED".equals(locationStatus)) where.append(" AND (latitude IS NULL OR longitude IS NULL)");
+        return new Filter(where.toString(),args);
+    }
+    private static String search(String keyword) { return "%"+keyword.trim().replace("\\","\\\\").replace("%","\\%").replace("_","\\_")+"%"; }
+    public Page list(int page,int pageSize,String keyword,String status,String direction,String locationStatus) {
+        Filter f=activeFilter(keyword,status,direction,locationStatus);
+        long total=jdbc.queryForObject("SELECT COUNT(*) FROM emergency_device_ledger"+f.sql(),Long.class,f.args().toArray());
+        List<Object> paged=new ArrayList<>(f.args()); paged.add(pageSize); paged.add(((long)page-1)*pageSize);
+        List<LedgerRecord> records=jdbc.query("SELECT "+FIELDS+" FROM emergency_device_ledger"+f.sql()+" ORDER BY id DESC LIMIT ? OFFSET ?",MAPPER,paged.toArray());
         return new Page(records,total,page,pageSize);
     }
-    public MapPoints mapPoints() {
-        List<MapPoint> records=jdbc.query("SELECT id,ledger_code,destination_address,device_condition,latitude,longitude FROM emergency_device_ledger WHERE deleted=FALSE AND latitude IS NOT NULL ORDER BY id DESC",
-            (rs,row) -> new MapPoint(Long.toString(rs.getLong("id")),rs.getString("ledger_code"),rs.getString("destination_address"),rs.getString("device_condition"),coordinate(rs,"latitude"),coordinate(rs,"longitude")));
-        long unlocated=jdbc.queryForObject("SELECT COUNT(*) FROM emergency_device_ledger WHERE deleted=FALSE AND latitude IS NULL",Long.class);
+    public MapPoints mapPoints(String keyword,String status,String direction,String locationStatus) {
+        Filter f=activeFilter(keyword,status,direction,locationStatus);
+        List<MapPoint> records=jdbc.query("SELECT id,ledger_code,destination_address,device_condition,latitude,longitude FROM emergency_device_ledger"+f.sql()+" AND latitude IS NOT NULL AND longitude IS NOT NULL ORDER BY id DESC",
+            (rs,row) -> new MapPoint(Long.toString(rs.getLong("id")),rs.getString("ledger_code"),rs.getString("destination_address"),rs.getString("device_condition"),coordinate(rs,"latitude"),coordinate(rs,"longitude")),f.args().toArray());
+        long unlocated=jdbc.queryForObject("SELECT COUNT(*) FROM emergency_device_ledger"+f.sql()+" AND (latitude IS NULL OR longitude IS NULL)",Long.class,f.args().toArray());
         return new MapPoints(records,unlocated);
     }
+    public List<String> importState() {
+        // 锁定读取也用于 MySQL REPEATABLE READ：确认看到取得共享锁后的最新版本。
+        return jdbc.query("SELECT id,version,deleted FROM emergency_device_ledger ORDER BY id FOR UPDATE",
+            (rs,row)->rs.getLong("id")+":"+rs.getLong("version")+":"+rs.getBoolean("deleted"));
+    }
+    public DeletedPage deleted(int page,int pageSize,String keyword,LocalDate from,LocalDate to) {
+        String source=" FROM (SELECT l.id,l.ledger_code,l.original_address,l.destination_address,COALESCE((SELECT MAX(a.created_at) FROM ledger_audit a WHERE a.ledger_id=l.id AND a.action='DELETE'),l.updated_at) AS deleted_at FROM emergency_device_ledger l WHERE l.deleted=TRUE) d";
+        StringBuilder where=new StringBuilder(" WHERE 1=1"); List<Object> args=new ArrayList<>();
+        if(keyword!=null&&!keyword.isBlank()) { where.append(" AND (ledger_code LIKE ? OR original_address LIKE ? OR destination_address LIKE ?)"); for(int i=0;i<3;i++) args.add(search(keyword)); }
+        if(from!=null) { where.append(" AND deleted_at>=?"); args.add(from.atStartOfDay()); }
+        if(to!=null&&to.isBefore(LocalDate.MAX)) { where.append(" AND deleted_at<?"); args.add(to.plusDays(1).atStartOfDay()); }
+        long total=jdbc.queryForObject("SELECT COUNT(*)"+source+where,Long.class,args.toArray());
+        args.add(pageSize); args.add(((long)page-1)*pageSize);
+        var records=jdbc.query("SELECT *"+source+where+" ORDER BY deleted_at DESC,id DESC LIMIT ? OFFSET ?",(rs,row)->new DeletedRecord(Long.toString(rs.getLong("id")),rs.getString("ledger_code"),rs.getString("original_address"),rs.getString("destination_address"),rs.getObject("deleted_at",LocalDateTime.class).atZone(ZoneId.of("Asia/Shanghai")).toOffsetDateTime()),args.toArray());
+        return new DeletedPage(records,total,page,pageSize);
+    }
+    public record DeletedRecord(String id,String ledgerCode,String originalAddress,String destinationAddress,OffsetDateTime deletedAt) {}
+    public record DeletedPage(List<DeletedRecord> records,long total,int page,int pageSize) {}
     public void audit(long org,long ledger,long actor,String action,String oldValue,String newValue) {
         jdbc.update("INSERT INTO ledger_audit(organization_id,ledger_id,actor_user_id,action,old_value,new_value,trace_id) VALUES (?,?,?,?,?,?,?)",org,ledger,actor,action,oldValue,newValue,Trace.id());
     }
@@ -118,10 +154,9 @@ public class LedgerRepository {
         Long count=jdbc.queryForObject("SELECT COUNT(*) FROM emergency_device_ledger WHERE ledger_code=? AND id<>?",Long.class,code,exceptId);
         return count!=null&&count>0;
     }
-    public CodeMatch codeMatch(long organizationId,String code) {
-        List<CodeMatch> rows=jdbc.query("SELECT id,deleted FROM emergency_device_ledger WHERE organization_id=? AND ledger_code=?",
-            (rs,row) -> new CodeMatch(rs.getLong("id"),rs.getBoolean("deleted")),organizationId,code);
-        return rows.isEmpty()?null:rows.get(0);
+    public List<CodeMatch> codeMatches(String code) {
+        return jdbc.query("SELECT id,deleted FROM emergency_device_ledger WHERE ledger_code=?",
+            (rs,row) -> new CodeMatch(rs.getLong("id"),rs.getBoolean("deleted")),code);
     }
     public record CodeMatch(long id,boolean deleted) {}
     public record Page(List<LedgerRecord> records,long total,int page,int pageSize) {}

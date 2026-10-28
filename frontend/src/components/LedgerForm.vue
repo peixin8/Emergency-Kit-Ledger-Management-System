@@ -10,7 +10,7 @@ import { ApiError } from '../api/http'
 import MapCanvas from './MapCanvas.vue'
 
 const props = defineProps<{ modelValue?: Ledger | null; submitting?: boolean }>()
-const emit = defineEmits<{ save: [value: LedgerInput] }>()
+const emit = defineEmits<{ save: [value: LedgerInput]; dirty: [value: boolean] }>()
 const formRef = ref<FormInstance>()
 const form = reactive<LedgerInput>(emptyLedger())
 const positionAddress = ref('')
@@ -26,8 +26,19 @@ function clearSearch() {
   searchMessage.value = ''
   searchedAddress = ''
 }
-watch(() => props.modelValue, value => { clearSearch(); Object.assign(form, emptyLedger(), value ?? {}); positionAddress.value = form.destinationAddress }, { immediate: true })
+const baseline = ref('')
+watch(() => props.modelValue, value => {
+  clearSearch()
+  const next = emptyLedger()
+  for (const key of Object.keys(next)) { if (value && Object.prototype.hasOwnProperty.call(value, key)) Reflect.set(next, key, Reflect.get(value, key)) }
+  Object.assign(form, next)
+  positionAddress.value = form.destinationAddress
+  baseline.value = JSON.stringify(form)
+}, { immediate: true })
 watch(() => form.destinationAddress, clearSearch)
+const isDirty = computed(() => JSON.stringify(form) !== baseline.value)
+watch(isDirty, value => emit('dirty', value))
+watch(() => props.submitting, value => { if (value) clearSearch() })
 const isEdit = computed(() => !!props.modelValue)
 const selectedPosition = computed(() => {
   const latitude = normalizeCoordinate(form.latitude)
@@ -36,8 +47,9 @@ const selectedPosition = computed(() => {
 })
 const locationNeedsReview = computed(() => selectedPosition.value !== null && addressesDiffer(positionAddress.value, form.destinationAddress))
 function normalizeCoordinate(value: string | null) { return value === null || value.trim() === '' ? null : value.trim() }
-function pickPosition(latitude: string, longitude: string) { form.latitude = latitude; form.longitude = longitude; positionAddress.value = form.destinationAddress }
+function pickPosition(latitude: string, longitude: string) { if (props.submitting) return; form.latitude = latitude; form.longitude = longitude; positionAddress.value = form.destinationAddress }
 async function findAddress() {
+  if (props.submitting) return
   const address = form.destinationAddress.trim()
   clearSearch()
   if (address.length < 2 || address.length > 255) {
@@ -65,7 +77,7 @@ async function findAddress() {
   }
 }
 function selectCandidate(candidate: AddressCandidate) {
-  if (searchedAddress !== form.destinationAddress.trim()) return
+  if (props.submitting || searchedAddress !== form.destinationAddress.trim()) return
   pickPosition(candidate.latitude, candidate.longitude)
   candidates.value = []
   searchMessage.value = '已选中候选点位，请在地图核对实际位置；如有偏差，可点击地图微调。'
@@ -86,6 +98,7 @@ const rules: FormRules<LedgerInput> = {
   longitude: [{ validator: (_rule, _value, callback) => validCoordinates(normalizeCoordinate(form.latitude), normalizeCoordinate(form.longitude)) ? callback() : callback(new Error('纬度和经度需成对填写，且在有效范围内，最多七位小数')), trigger: 'blur' }]
 }
 async function submit() {
+  if (props.submitting) return
   const valid = await formRef.value?.validate().catch(() => false)
   if (!valid) return
   const input = { ...form }
@@ -97,11 +110,11 @@ async function submit() {
   if (!validCoordinates(input.latitude, input.longitude)) return
   emit('save', input)
 }
-defineExpose({ submit })
+defineExpose({ submit, isDirty })
 </script>
 
 <template>
-  <el-form ref="formRef" :model="form" :rules="rules" label-position="top" class="ledger-form" @submit.prevent="submit">
+  <el-form ref="formRef" :model="form" :disabled="submitting" :rules="rules" label-position="top" class="ledger-form" @submit.prevent="submit">
     <div class="form-section-title"><span>01</span> 申请与流转信息</div>
     <div class="form-grid">
       <el-form-item label="台账编号" prop="ledgerCode"><el-input v-model.trim="form.ledgerCode" placeholder="如 YJB-2026-001" maxlength="64" /></el-form-item>
@@ -115,10 +128,10 @@ defineExpose({ submit })
     </div>
     <div class="form-section-title"><span>02</span> 目标地址点位</div>
     <p class="form-location-hint">输入目标地址后点击搜索，选择候选位置并在地图核对；也可在厦门地图上点击实际位置或手动填写 WGS84 经纬度。未选点的台账会显示为待定位。</p>
-    <div class="address-search-actions"><button type="button" class="address-search-button" :disabled="searchingAddress" @click="findAddress">{{ searchingAddress ? '搜索中…' : '搜索地址' }}</button><span>仅点击按钮时，将目标地址发送至高德地图服务查询。</span></div>
+    <div class="address-search-actions"><button type="button" class="address-search-button" :disabled="submitting || searchingAddress" @click="findAddress">{{ searchingAddress ? '搜索中…' : '搜索地址' }}</button><span>仅点击按钮时，将目标地址发送至高德地图服务查询。</span></div>
     <p v-if="searchMessage" class="address-search-message" role="status">{{ searchMessage }}</p>
-    <ul v-if="candidates.length" class="address-candidates" aria-label="地址搜索候选位置"><li v-for="(candidate, index) in candidates" :key="`${candidate.latitude}-${candidate.longitude}-${index}`"><button type="button" class="address-candidate" @click="selectCandidate(candidate)"><strong>{{ candidate.displayName }}</strong><small>{{ candidate.latitude }}, {{ candidate.longitude }}</small></button></li></ul>
-    <MapCanvas pickable :selected="selectedPosition" @pick="pickPosition" />
+    <ul v-if="candidates.length" class="address-candidates" aria-label="地址搜索候选位置"><li v-for="(candidate, index) in candidates" :key="`${candidate.latitude}-${candidate.longitude}-${index}`"><button type="button" class="address-candidate" :disabled="submitting" @click="selectCandidate(candidate)"><strong>{{ candidate.displayName }}</strong><small>{{ candidate.latitude }}, {{ candidate.longitude }}</small></button></li></ul>
+    <MapCanvas :pickable="!submitting" :selected="selectedPosition" @pick="pickPosition" />
     <div class="form-grid location-coordinate-fields">
       <el-form-item label="纬度" prop="latitude" class="latitude-input"><el-input v-model.trim="form.latitude" inputmode="decimal" placeholder="例如 24.4798345" @change="positionAddress = form.destinationAddress" /></el-form-item>
       <el-form-item label="经度" prop="longitude" class="longitude-input"><el-input v-model.trim="form.longitude" inputmode="decimal" placeholder="例如 118.0894251" @change="positionAddress = form.destinationAddress" /></el-form-item>

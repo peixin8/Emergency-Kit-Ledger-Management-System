@@ -47,16 +47,25 @@ public class LedgerExcelService {
     }
 
     public byte[] export(CurrentUser user,String keyword,String status,String direction) {
-        // Reuse the list endpoint's filter validation and bound the in-memory workbook.
-        ledgers.list(user,1,1,keyword,status,direction);
-        LedgerRepository.Page result=repository.list(1,MAX_EXPORT_ROWS+1,keyword,status,direction);
-        if(result.total()>MAX_EXPORT_ROWS) throw bad("导出超过 10000 条，请缩小筛选范围");
+        return export(user,keyword,status,direction,null);
+    }
+    public byte[] export(CurrentUser user,String keyword,String status,String direction,String locationStatus) {
+        return writeWorkbook(exportRecords(user,keyword,status,direction,locationStatus));
+    }
+    List<LedgerRecord> exportRecords(CurrentUser user,String keyword,String status,String direction,String locationStatus) {
+        ledgers.validateFilters(keyword,status,direction,locationStatus);
+        LedgerRepository.Page result=repository.list(1,MAX_EXPORT_ROWS+1,keyword,status,direction,locationStatus);
+        // COUNT 与 SELECT 之间可能有并发新增，实际取出的记录数也必须满足上限。
+        if(result.total()>MAX_EXPORT_ROWS||result.records().size()>MAX_EXPORT_ROWS) throw bad("导出超过 10000 条，请缩小筛选范围");
+        return result.records();
+    }
+    byte[] writeWorkbook(List<LedgerRecord> records) {
         try(XSSFWorkbook workbook=new XSSFWorkbook(); ByteArrayOutputStream out=new ByteArrayOutputStream()) {
             var sheet=workbook.createSheet("应急宝台账");
             Row header=sheet.createRow(0);
             for(int i=0;i<HEADERS.size();i++) header.createCell(i).setCellValue(HEADERS.get(i));
             int rowNumber=1;
-            for(LedgerRecord record:result.records()) {
+            for(LedgerRecord record:records) {
                 Row row=sheet.createRow(rowNumber++);
                 String[] values={record.ledgerCode(),record.originalAddress(),record.destinationAddress(),
                     METHOD.get(record.applicationMethod()),record.applicantContact(),record.applicantPhone(),
@@ -73,26 +82,42 @@ public class LedgerExcelService {
 
     @Transactional
     public ImportCounts importFile(CurrentUser user,MultipartFile file) {
+        repository.lockSharedWorkspace(user.organizationId());
+        return applyRows(user,parseFile(file));
+    }
+    ImportCounts applyRows(CurrentUser user,ParsedFile parsed) {
+        int created=0,updated=0,unchanged=0;
+        Set<Long> seenLedgerIds=new HashSet<>();
+        for(ImportRow row:parsed.rows()) {
+            LedgerService.ImportResult result;
+            try { result=ledgers.importUpsert(user,row.request()); }
+            catch(DuplicateKeyException e) { throw duplicate(row.line()); }
+            catch(ApiException e) {
+                if("DUPLICATE_LEDGER_CODE".equals(e.code())) throw duplicate(row.line());
+                throw new ApiException(e.status(),e.code(),"第 "+row.line()+" 行："+e.getMessage());
+            }
+            // 按数据库实际命中的 ID 去重；任一别名重复均回滚全文件及审计。
+            if(!seenLedgerIds.add(result.ledgerId())) throw duplicateInFile(row.line());
+            if(result.outcome()==LedgerService.ImportOutcome.CREATED) created++;
+            else if(result.outcome()==LedgerService.ImportOutcome.UPDATED) updated++;
+            else unchanged++;
+        }
+        return new ImportCounts(created+updated+unchanged,created,updated,unchanged);
+    }
+    ParsedFile parseFile(MultipartFile file) {
         if(file==null||file.isEmpty()) throw bad("Excel 文件不能为空");
-        if(file.getSize()>MAX_BYTES) throw new ApiException(HttpStatus.PAYLOAD_TOO_LARGE,"FILE_TOO_LARGE","Excel 文件不能超过 2 MB");
-        if(file.getOriginalFilename()==null||!file.getOriginalFilename().toLowerCase().endsWith(".xlsx")) throw bad("仅支持 .xlsx 文件");
+        if(file.getSize()>MAX_BYTES) throw new ApiException(HttpStatus.PAYLOAD_TOO_LARGE,"UPLOAD_TOO_LARGE","Excel 文件不能超过 2 MB");
+        if(file.getOriginalFilename()==null||!file.getOriginalFilename().toLowerCase(java.util.Locale.ROOT).endsWith(".xlsx")) throw bad("仅支持 .xlsx 文件");
         try(XSSFWorkbook workbook=new XSSFWorkbook(file.getInputStream())) {
             if(workbook.getNumberOfSheets()!=1) throw bad("Excel 只能包含一个工作表");
-            var sheet=workbook.getSheetAt(0);
-            Row header=sheet.getRow(0);
+            var sheet=workbook.getSheetAt(0); Row header=sheet.getRow(0);
             if(header==null) throw bad("Excel 表头缺失");
-            DataFormatter formatter=new DataFormatter();
-            Map<String,Integer> columns=columns(header,formatter);
+            DataFormatter formatter=new DataFormatter(); Map<String,Integer> columns=columns(header,formatter);
             if(sheet.getLastRowNum()>MAX_IMPORT_ROWS) throw bad("Excel 不能超过 1000 行数据");
-            int created=0;
-            int updated=0;
-            int unchanged=0;
-            Set<String> seenCodes=new HashSet<>();
+            List<ImportRow> rows=new ArrayList<>(); Set<String> seenCodes=new HashSet<>();
             for(int index=1;index<=sheet.getLastRowNum();index++) {
-                Row row=sheet.getRow(index);
-                int line=index+1;
-                if(row==null) continue;
-                if(isBlank(row,formatter,columns,line)) continue;
+                Row row=sheet.getRow(index); int line=index+1;
+                if(row==null||isBlank(row,formatter,columns,line)) continue;
                 LedgerRequest request=parse(row,formatter,columns,line);
                 Set<ConstraintViolation<LedgerRequest>> violations=validator.validate(request);
                 if(!violations.isEmpty()) {
@@ -101,23 +126,15 @@ public class LedgerExcelService {
                 }
                 validateImportedFields(request,line);
                 if(!seenCodes.add(request.ledgerCode().trim())) throw duplicateInFile(line);
-                try {
-                    LedgerService.ImportOutcome outcome=ledgers.importUpsert(user,request);
-                    if(outcome==LedgerService.ImportOutcome.CREATED) created++;
-                    else if(outcome==LedgerService.ImportOutcome.UPDATED) updated++;
-                    else unchanged++;
-                }
-                catch(DuplicateKeyException e) { throw duplicate(line); }
-                catch(ApiException e) {
-                    if("DUPLICATE_LEDGER_CODE".equals(e.code())) throw duplicate(line);
-                    throw new ApiException(e.status(),e.code(),"第 "+line+" 行："+e.getMessage());
-                }
+                rows.add(new ImportRow(line,request));
             }
-            if(created+updated+unchanged==0) throw bad("Excel 没有可导入的数据");
-            return new ImportCounts(created+updated+unchanged,created,updated,unchanged);
+            if(rows.isEmpty()) throw bad("Excel 没有可导入的数据");
+            return new ParsedFile(rows,HEADERS.stream().filter(name->!columns.containsKey(name)).toList());
         } catch(ApiException e) { throw e; }
         catch(Exception e) { throw bad("Excel 文件格式无效或无法读取"); }
     }
+    record ImportRow(int line,LedgerRequest request) {}
+    record ParsedFile(List<ImportRow> rows,List<String> missingOptionalColumns) {}
 
     private Map<String,Integer> columns(Row header,DataFormatter formatter) {
         Map<String,Integer> result=new HashMap<>();
@@ -155,7 +172,7 @@ public class LedgerExcelService {
             value(row,columns,"台账编号",formatter,line),value(row,columns,"原始地址",formatter,line),value(row,columns,"目标地址",formatter,line),
             applicationMethod(value(row,columns,"进出申请方式",formatter,line),line),
             value(row,columns,"申请联系人",formatter,line),value(row,columns,"联系电话",formatter,line),condition,detail,direction,
-            date(value(row,columns,"申请日期",formatter,line),line),value(row,columns,"PTN端口（网元+槽口）",formatter,line),
+            date(row,columns,formatter,line),value(row,columns,"PTN端口（网元+槽口）",formatter,line),
             value(row,columns,"接入机房",formatter,line),value(row,columns,"纤芯",formatter,line),value(row,columns,"制式",formatter,line),
             value(row,columns,"BBU型号",formatter,line),value(row,columns,"RRU型号",formatter,line),
             power(value(row,columns,"BBU-RRU功耗(W)",formatter,line),line),value(row,columns,"网管IP",formatter,line),
@@ -189,9 +206,16 @@ public class LedgerExcelService {
         if("线上联系申请".equals(value)) return "ONLINE";
         return decode(METHOD,value,"进出申请方式",line);
     }
-    private static LocalDate date(String value,int line) {
-        try { return LocalDate.parse(value); }
-        catch(RuntimeException e) { throw bad("第 "+line+" 行「申请日期」：日期格式无效，需为 yyyy-MM-dd"); }
+    private static LocalDate date(Row row,Map<String,Integer> columns,DataFormatter formatter,int line) {
+        Cell cell=row.getCell(columns.get("申请日期"),Row.MissingCellPolicy.RETURN_BLANK_AS_NULL);
+        if(cell!=null&&cell.getCellType()==CellType.NUMERIC&&org.apache.poi.ss.usermodel.DateUtil.isCellDateFormatted(cell)) {
+            double serial=cell.getNumericCellValue();
+            if(!org.apache.poi.ss.usermodel.DateUtil.isValidExcelDate(serial)) throw bad("第 "+line+" 行「申请日期」：日期值无效");
+            boolean use1904=((XSSFWorkbook)row.getSheet().getWorkbook()).isDate1904();
+            return org.apache.poi.ss.usermodel.DateUtil.getLocalDateTime(serial,use1904).toLocalDate();
+        }
+        try { return LocalDate.parse(raw(row,columns.get("申请日期"),formatter)); }
+        catch(RuntimeException e) { throw bad("第 "+line+" 行「申请日期」：日期格式无效，需为 yyyy-MM-dd，且不接受公式单元格"); }
     }
     private static Integer integer(String value,String field,int line) {
         if(value.isBlank()) return null;

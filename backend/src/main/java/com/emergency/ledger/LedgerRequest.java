@@ -2,6 +2,7 @@ package com.emergency.ledger;
 
 import java.time.LocalDate;
 import jakarta.validation.constraints.*;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 
 public record LedgerRequest(
     @NotBlank @Size(max=64) String ledgerCode,
@@ -22,9 +23,9 @@ public record LedgerRequest(
     @Size(max=120) String rruModel,
     String bbuRruPowerWatts,
     @Size(max=45) String managementIp,
-    @Min(1) @Max(4094) Integer managementVlan,
+    @JsonDeserialize(using=VlanIntegerDeserializer.class) @Min(1) @Max(4094) Integer managementVlan,
     @Size(max=45) String businessIp,
-    @Min(1) @Max(4094) Integer businessVlan,
+    @JsonDeserialize(using=VlanIntegerDeserializer.class) @Min(1) @Max(4094) Integer businessVlan,
     @Size(max=120) String deviceSerialNo,
     @Size(max=120) String assetOwner,
     @Size(max=2000) String remarks,
